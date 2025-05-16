@@ -1,0 +1,30 @@
+name: emotion-classification-dlfa
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - ffmpeg
+  - pytorch>=2.0.0
+  - torchaudio>=2.0.0
+  - numpy>=1.22.0
+  - pandas>=1.5.0
+  - matplotlib>=3.5.0
+  - seaborn>=0.12.0
+  - scikit-learn>=1.0.0
+  - tqdm>=4.64.0
+  - requests
+  - xz
+  - pyyaml
+  - librosa>=0.10.0
+  - pip
+  - pip:
+    - transformers>=4.28.0
+    - datasets>=2.11.0
+    - huggingface-hub
+    - sounddevice>=0.4.5
+    - ffmpeg-python>=0.2.0
+    - filetype
+    # Consider adding wandb if you plan to use Weights & Biases
+    # - wandb

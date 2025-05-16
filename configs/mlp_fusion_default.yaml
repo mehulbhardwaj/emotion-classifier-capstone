@@ -1,0 +1,75 @@
+# configs/mlp_fusion_default.yaml
+
+# --- General Project Settings ---
+# project_root: "autodetect" # Usually auto-detected by config.py
+dataset_name: "meld"      # "meld", "iemocap", etc.
+architecture_name: "mlp_fusion" # For clarity and potential checks
+input_mode: "audio_text"  # "audio_text", "audio_only_asr"
+random_seed: 42
+device_name: "cuda"       # "cuda", "cpu", "mps" (if available)
+num_dataloader_workers: 4
+# Path to the ffmpeg executable if not in system PATH (null lets system try to find it)
+ffmpeg_path: "ffmpeg"         # e.g., "/usr/local/bin/ffmpeg" or "ffmpeg"
+
+# --- Data Preparation ---
+run_mp4_to_wav_conversion: false # Set to false to skip WAV conversion
+# To force, use CLI: --force_wav_conversion
+run_hf_dataset_creation: true  # Ensure this is true to run feature extraction
+# To force, use CLI: --force_reprocess_hf_dataset
+
+# Audio processing settings for Hugging Face dataset creation
+target_sample_rate: 16000
+# Text processing settings for Hugging Face dataset creation
+# ASR model to use if transcribing text during HF dataset creation (usually not needed for MELD with GT text)
+asr_model_name_for_hf_dataset: null # e.g., "openai/whisper-tiny.en"
+use_asr_for_text_generation_in_hf_dataset: false
+text_max_length_for_hf_dataset: 128
+
+# --- Training Parameters ---
+num_epochs: 10
+batch_size: 32
+learning_rate: 0.0001
+optimizer_name: "AdamW"             # e.g., "Adam", "AdamW", "SGD"
+lr_scheduler_name: "linear"         # e.g., "linear", "cosine", "reduce_on_plateau"
+gradient_accumulation_steps: 1
+early_stopping_patience: 3          # Number of epochs with no improvement to wait
+mixed_precision_training: true      # true (for fp16), "bf16", or false
+model_save_dir_base_name: "models"  # Base directory for saving models
+experiment_name: "mlp_fusion_default_run" # Subfolder for this specific run's checkpoints & logs
+
+# --- Evaluation Parameters ---
+eval_split: "dev"                   # "dev" or "test" to use for evaluation
+
+# --- Inference Parameters ---
+infer_num_examples: 10              # Max examples to process or print for CSV inference
+# ASR model for inference if input_mode is "audio_only_asr" or text is missing
+asr_model_name: "openai/whisper-tiny.en" # e.g., "openai/whisper-base.en"
+
+# --- Dataset Specific Limits (for quick testing, can be overridden by CLI) ---
+limit_dialogues_train: null         # Set to an integer for quick tests, null for no limit
+limit_dialogues_dev: null
+limit_dialogues_test: null
+
+# --- MLP Fusion Specific Parameters ---
+# These parameters are typically defined in the MLP Fusion config class
+# (e.g., architectures/mlp_fusion/config.py) and will be loaded into it.
+text_encoder_model_name: "distilroberta-base"
+audio_encoder_model_name: "facebook/wav2vec2-base-960h"
+# Example MLP head configuration (actual structure depends on your MLPFusionModel)
+mlp_hidden_size: 768 # Often related to concatenated encoder output sizes
+mlp_dropout_rate: 0.1
+# You might have other parameters like fusion_strategy, etc.
+# --- Audio Feature Params (used by build_hf_dataset) ---
+# Check if these are the right names and if they should be in BaseConfig or here
+# For mel spectrograms, common parameters:
+n_fft: 2048
+hop_length_ms: null # If null, will use hop_length directly. If set, overrides hop_length.
+win_length_ms: null # If null, will use win_length directly. If set, overrides win_length.
+hop_length: 512  # samples
+win_length: 2048 # samples
+n_mels: 128      # Number of Mel bands
+f_min: 0.0       # Minimum H_z frequency
+f_max: 8000.0    # Maximum H_z frequency (half of target_sample_rate is common)
+power: 2.0       # Exponent for the magnitude spectrogram
+normalize_spectrogram: true
+mel_scale: "htk" # "htk" or "slaney" 
