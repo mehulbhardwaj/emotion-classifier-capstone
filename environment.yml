@@ -18,6 +18,7 @@ dependencies:
   - xz
   - pyyaml
   - librosa>=0.10.0
+  - pytest
   - pip
   - pip:
     - transformers>=4.28.0

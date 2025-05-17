@@ -156,22 +156,29 @@ def process_dataset_item(item, text_tokenizer, config: BaseConfig, whisper_proce
     Processes a single item from the dataset (typically a dictionary).
     Extracts features (mel spectrogram, text tokens). Optionally performs ASR.
     Device for ASR model and tensors obtained from cfg.device.
+    The input 'item' is preserved and augmented with new features.
     """
-    # Use device from cfg (passed as 'device' argument to this function)
     current_device = config.device
+    output_item = item.copy() # Start with a copy of the original item to preserve its columns
 
     try:
         audio_path = item['audio_path']
-        text = item['text']
+        text_to_tokenize_initially = item['text'] # Original text
 
         # Audio processing
-        mel_spectrogram = extract_mel_spectrogram(audio_path, config=config) # extract_mel_spectrogram uses cfg internally
+        mel_spectrogram = extract_mel_spectrogram(audio_path, config=config)
         if mel_spectrogram is None: 
+            # If feature extraction fails, we might still want to keep the item if text features are useful
+            # For now, returning None will filter it out later.
+            # Alternatively, set 'input_features' to None or a placeholder and decide later.
             return None 
 
-        item['input_features'] = mel_spectrogram.to(current_device) # Move to device
+        output_item['input_features'] = mel_spectrogram.to(current_device)
 
         # Text processing
+        text_for_tokenization = text_to_tokenize_initially
+        output_item['asr_text'] = "" # Initialize asr_text
+
         if use_asr and whisper_processor and whisper_model:
             try:
                 waveform, sr = torchaudio.load(audio_path)
@@ -185,38 +192,38 @@ def process_dataset_item(item, text_tokenizer, config: BaseConfig, whisper_proce
                     waveform = torch.mean(waveform, dim=0)
 
                 inputs = whisper_processor(waveform, sampling_rate=whisper_processor.feature_extractor.sampling_rate, return_tensors="pt")
-                # Move ASR input features to device
                 input_features_asr = inputs.input_features.to(current_device) 
                 
                 with torch.no_grad():
-                    # whisper_model should already be on current_device
                     predicted_ids = whisper_model.generate(input_features_asr) 
                 
                 transcription = whisper_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
-                item['asr_text'] = transcription
-                text_to_tokenize = transcription 
+                output_item['asr_text'] = transcription
+                text_for_tokenization = transcription # Use ASR text if successful
             except Exception as e_asr:
                 print(f"Error during ASR for {audio_path}: {e_asr}. Falling back to original text.")
-                item['asr_text'] = "" 
-                text_to_tokenize = text 
-        else:
-            text_to_tokenize = text
-            item['asr_text'] = ""
-
+                # output_item['asr_text'] is already ""
+                text_for_tokenization = text_to_tokenize_initially
+        
         tokenized_text = text_tokenizer(
-            text_to_tokenize, 
+            text_for_tokenization, 
             padding='max_length', 
             truncation=True, 
-            max_length=config.max_seq_length_text, # Use max_seq_length_text from cfg
+            max_length=config.max_seq_length_text,
             return_tensors="pt"
         )
-        # Move tokenized text to device
-        item['input_ids'] = tokenized_text['input_ids'].squeeze(0).to(current_device) 
-        item['attention_mask'] = tokenized_text['attention_mask'].squeeze(0).to(current_device)
+        output_item['input_ids'] = tokenized_text['input_ids'].squeeze(0).to(current_device) 
+        output_item['attention_mask'] = tokenized_text['attention_mask'].squeeze(0).to(current_device)
         
-        return item
+        # Remove original audio_path as it's now represented by input_features
+        if 'audio_path' in output_item:
+            del output_item['audio_path']
+            
+        return output_item
     except Exception as e_item:
         print(f"Error processing item {item.get('audio_path', 'UNKNOWN')}: {e_item}")
+        # Return a modified item with error info or None to filter out
+        # For now, filter out by returning None
         return None
 
 
@@ -265,9 +272,9 @@ def build_and_process_split_dataset(split, text_tokenizer, current_cfg: BaseConf
         
         processed_dataset = initial_dataset.map(
             _process_func, 
-            num_proc=num_proc_actual,
+            num_proc=num_proc_actual
             # batched=False, # process_dataset_item handles one item at a time
-            remove_columns=list(initial_dataset.column_names) # Remove old columns after processing. Careful if _process_func returns None.
+            # REMOVED: remove_columns=list(initial_dataset.column_names) 
         )
         # Filter out None items that resulted from processing errors
         processed_dataset = processed_dataset.filter(lambda example: example is not None)

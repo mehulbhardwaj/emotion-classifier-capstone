@@ -1,0 +1,35 @@
+# Test configuration for running main.py in a controlled environment
+
+dataset_name: "test_main_run" # This will make BaseConfig look for data in 'PROJECT_ROOT/test_main_run_data'
+
+# Overrides for training loop to make it quick
+num_epochs: 1
+# batch_size: 2 # Keep small for tiny dataset
+
+# These limits will be applied during data preparation and affect dataset loading
+limit_dialogues_train: 1 # Our dummy CSV has 1 dialogue with 2 utterances
+limit_dialogues_dev: 1   # For validation split, if used
+limit_dialogues_test: 1  # For test split, if used
+
+# Data preparation flags
+run_mp4_to_wav_conversion: false # We provide dummy WAVs
+run_hf_dataset_creation: true    # We need HF datasets to be created from dummy CSV/WAVs
+
+# Architecture (main.py defaults to mlp_fusion if available)
+architecture_name: "mlp_fusion"
+
+# Ensure a small model for speed, if mlp_fusion_config allows these to be set
+# These are examples, refer to MLPFusionConfig for actual parameters
+# mlp_fusion_specific:
+#   hidden_dims: [64]
+#   dropout_rates: [0.1]
+#   activation: "relu"
+
+# Logging related (optional for test, but good practice)
+# log_level: "INFO"
+
+# Device: use CPU for tests to avoid GPU dependencies in basic CI
+device_name: "cpu"
+
+# Seed for reproducibility in tests
+random_seed: 123 

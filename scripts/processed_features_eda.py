@@ -17,164 +17,187 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from configs.base_config import BaseConfig # Changed
+from configs.base_config import BaseConfig
 
-# Instantiate BaseConfig for MELD dataset (default)
-# This EDA script is specific to MELD processed features for now.
-# THIS WILL BE REPLACED IF CFG IS PASSED TO MAIN
-cfg = BaseConfig(dataset_name="meld") # Default config
+# EDA_OUTPUTS_DIR will be defined within perform_meld_eda using the config
 
-# Use config properties
-ID_TO_EMOTION = {i: name for i, name in enumerate(cfg.class_names)}
-MELD_EMOTIONS = cfg.class_names
-
-# EDA_OUTPUTS_DIR should also come from config or be defined consistently.
-EDA_OUTPUTS_DIR = cfg.results_dir / "eda" / "processed_features_analysis" / cfg.dataset_name
-
-# from common.utils import plot_to_numpy # If used for tensorboard, else remove
-# This function was not in the provided common/utils.py. Assuming not critical for now.
-
-def perform_meld_eda(tensorboard_writer=None):
+def perform_meld_eda(config: BaseConfig, markdown_report_path: Path):
     """
     Perform exploratory data analysis on the processed MELD dataset (Hugging Face Datasets).
     Creates various plots and statistics about the dataset.
-    Outputs plots to EDA_OUTPUTS_DIR and optionally to TensorBoard.
+    Outputs plots to EDA_OUTPUTS_DIR and generates a markdown report.
     """
-    print("Performing exploratory data analysis on MELD processed Hugging Face datasets...")
+    md_lines = []
+    md_lines.append(f"# EDA Report for Processed {config.dataset_name.upper()} Dataset")
+    md_lines.append(f"Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    md_lines.append("\n---\n")
+
+    print(f"Performing exploratory data analysis on {config.dataset_name.upper()} processed Hugging Face datasets...")
+    md_lines.append("## Overview")
+    md_lines.append(f"This report provides an exploratory data analysis of the processed {config.dataset_name.upper()} Hugging Face datasets.")
     
+    EDA_OUTPUTS_DIR = config.results_dir / "eda" / "processed_features_analysis" / config.dataset_name
     Path(EDA_OUTPUTS_DIR).mkdir(parents=True, exist_ok=True)
-    print(f"EDA outputs will be saved to: {EDA_OUTPUTS_DIR}")
-    
+    print(f"EDA plot outputs will be saved to: {EDA_OUTPUTS_DIR}")
+    # Ensure paths in markdown are relative to the markdown file in the root.
+    try:
+        eda_output_dir_relative = EDA_OUTPUTS_DIR.relative_to(PROJECT_ROOT)
+    except ValueError: # Handle cases where PROJECT_ROOT might not be an ancestor (e.g. symlinks, unusual setup)
+        eda_output_dir_relative = EDA_OUTPUTS_DIR 
+    md_lines.append(f"Plot images are saved in `{eda_output_dir_relative}`.")
+    md_lines.append("\n")
+
     splits_data = {}
-    all_datasets = []
-    expected_columns = None
+    base_processed_dir = config.processed_hf_dataset_dir
 
-    # Use cfg.processed_features_dir
-    base_processed_dir = cfg.processed_features_dir # Changed
-
+    md_lines.append("### Dataset Loading Status")
     for split in ['train', 'dev', 'test']:
-        # The processed_features_dir already includes the dataset_name in its path
-        # so we just need to add the split.
-        split_path = base_processed_dir / split 
+        split_path = base_processed_dir / split
         if split_path.exists() and split_path.is_dir():
             try:
                 ds = load_from_disk(str(split_path))
                 splits_data[split] = ds
-                all_datasets.append(ds)
                 print(f"Loaded {split} split with {len(ds)} samples. Columns: {ds.column_names}")
-                if expected_columns is None:
-                    expected_columns = set(ds.column_names)
-                elif set(ds.column_names) != expected_columns:
-                    print(f"Warning: Column mismatch in {split} split. Expected {expected_columns}, got {ds.column_names}")
+                md_lines.append(f"*   Loaded **{split}** split with **{len(ds)}** samples.")
+                md_lines.append(f"    *   Columns: `{ds.column_names}`")
             except Exception as e:
-                print(f"Error loading {split} split from {split_path}: {e}")
+                error_msg = f"Error loading {split} split from {split_path}: {e}"
+                print(error_msg)
+                md_lines.append(f"*   <span style='color:red;'>{error_msg}</span>")
         else:
-            print(f"Processed dataset for split '{split}' not found at {split_path}. Run data preparation first.")
+            not_found_msg = f"Processed dataset for split '{split}' not found at {split_path}."
+            print(not_found_msg)
+            md_lines.append(f"*   <span style='color:red;'>{not_found_msg}</span>")
     
     if not splits_data:
         print("No dataset splits could be loaded. EDA cannot proceed.")
+        md_lines.append("\n**No dataset splits could be loaded. EDA cannot proceed.**")
+        with open(markdown_report_path, 'w', encoding='utf-8') as f:
+            f.write("\n".join(md_lines))
+        print(f"Markdown report (aborted) saved to {markdown_report_path}")
         return
 
+    # Use config properties for ID_TO_EMOTION and MELD_EMOTIONS
+    ID_TO_EMOTION_FROM_CFG = {i: name for i, name in enumerate(config.class_names)}
+    MELD_EMOTIONS_FROM_CFG = config.class_names
+
+    # --- 1. Emotion Distribution ---
+    md_lines.append("\n## 1. Emotion Distribution")
     print("\n1. Analyzing Emotion Distribution...")
-    # Adjusted subplot count based on available splits_data
     num_valid_splits = len(splits_data)
-    if num_valid_splits == 0: 
-        print("No valid splits for emotion distribution.")
-        return
-        
-    fig_emotion_dist, axes = plt.subplots(1, num_valid_splits + 1, figsize=(5 * (num_valid_splits +1) , 5), sharey=True) 
-    if num_valid_splits == 1: # if only one split, axes is not an array
-        axes = [axes, axes] # Make it iterable for the loop
-        
-    all_emotions_list = []
-
-    for i, (split_name, dataset) in enumerate(splits_data.items()):
-        if 'label' not in dataset.column_names: # Common practice is 'label' or 'labels'
-            print(f"'label' column not found in {split_name} split. Trying 'labels'...")
-            if 'labels' not in dataset.column_names:
-                 print(f"Neither 'label' nor 'labels' column found in {split_name}. Skipping emotion distribution.")
-                 continue
-            label_column_name = 'labels'
-        else:
-            label_column_name = 'label'
-        
-        emotion_label_ids = dataset[label_column_name]
-        emotion_labels = [ID_TO_EMOTION.get(label_id, "Unknown") for label_id in emotion_label_ids]
-        all_emotions_list.extend(emotion_labels)
-        emotion_counts = Counter(emotion_labels)
-        
-        emotions_ordered = MELD_EMOTIONS # Uses cfg.class_names via this variable
-        counts_ordered = [emotion_counts.get(emo, 0) for emo in emotions_ordered]
-
-        current_ax = axes[i] if num_valid_splits > 1 else axes[0] # handle single split case for axes
-        sns.barplot(x=emotions_ordered, y=counts_ordered, ax=current_ax, palette="viridis")
-        current_ax.set_title(f"{split_name.capitalize()} Split")
-        current_ax.set_ylabel("Frequency")
-        current_ax.tick_params(axis='x', rotation=45)
-        for k, bar in enumerate(current_ax.patches):
-            current_ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), 
-                         str(counts_ordered[k]), ha='center', va='bottom')
-
-    if all_emotions_list:
-        combined_emotion_counts = Counter(all_emotions_list)
-        emotions_ordered = MELD_EMOTIONS # Uses cfg.class_names
-        counts_ordered = [combined_emotion_counts.get(emo, 0) for emo in emotions_ordered]
-        
-        # Determine the correct axis for the combined plot
-        combined_ax = axes[num_valid_splits] if num_valid_splits > 0 else axes[0]
-        if num_valid_splits == 0 and len(axes) > 1 : combined_ax = axes[0] # Should not happen given earlier check
-        
-        sns.barplot(x=emotions_ordered, y=counts_ordered, ax=combined_ax, palette="viridis")
-        combined_ax.set_title("Overall Distribution")
-        if num_valid_splits > 0 : combined_ax.set_ylabel("") # No Y-label if sharing
-        else: combined_ax.set_ylabel("Frequency")
-        combined_ax.tick_params(axis='x', rotation=45)
-        for k, bar in enumerate(combined_ax.patches):
-            combined_ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), 
-                         str(counts_ordered[k]), ha='center', va='bottom')
     
-    plt.suptitle("Emotion Class Distribution")
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    emotion_dist_path = EDA_OUTPUTS_DIR / "processed_emotion_distribution.png"
-    plt.savefig(emotion_dist_path)
-    print(f"Saved emotion distribution plot to {emotion_dist_path}")
-    # if tensorboard_writer:
-    #     tensorboard_writer.add_image("EDA/Processed_Emotion_Distribution", plot_to_numpy(fig_emotion_dist), 0)
-    plt.close(fig_emotion_dist)
+    if num_valid_splits > 0:
+        fig_emotion_dist, axes = plt.subplots(1, num_valid_splits + 1, figsize=(5 * (num_valid_splits +1) , 5), sharey=True)
+        if num_valid_splits == 1: # Handle single split case for axes
+            axes = [axes, axes] 
+            
+        all_emotions_list = []
+        emotion_stats_md = ["| Split   | Emotion    | Count | Percentage |", "|---------|------------|-------|------------|"]
 
+        for i, (split_name, dataset) in enumerate(splits_data.items()):
+            label_column_name = 'label' if 'label' in dataset.column_names else 'labels' if 'labels' in dataset.column_names else None
+            if not label_column_name:
+                msg = f"Neither 'label' nor 'labels' column found in {split_name} split. Skipping emotion distribution for this split."
+                print(msg)
+                md_lines.append(f"\n- <span style='color:orange;'>{msg}</span>")
+                continue
+            
+            emotion_label_ids = dataset[label_column_name]
+            emotion_labels = [ID_TO_EMOTION_FROM_CFG.get(label_id, "Unknown") for label_id in emotion_label_ids]
+            all_emotions_list.extend(emotion_labels)
+            emotion_counts = Counter(emotion_labels)
+            
+            emotions_ordered = MELD_EMOTIONS_FROM_CFG
+            counts_ordered = [emotion_counts.get(emo, 0) for emo in emotions_ordered]
+            total_in_split = sum(counts_ordered)
+
+            for emo_idx, emo_name in enumerate(emotions_ordered):
+                count = counts_ordered[emo_idx]
+                percentage = (count / total_in_split * 100) if total_in_split > 0 else 0
+                emotion_stats_md.append(f"| {split_name.capitalize()} | {emo_name} | {count} | {percentage:.2f}% |")
+
+            current_ax = axes[i]
+            sns.barplot(x=emotions_ordered, y=counts_ordered, ax=current_ax, palette="viridis")
+            current_ax.set_title(f"{split_name.capitalize()} Split")
+            current_ax.set_ylabel("Frequency")
+            current_ax.tick_params(axis='x', rotation=45)
+            for k, bar_patch in enumerate(current_ax.patches): # Renamed bar to bar_patch
+                current_ax.text(bar_patch.get_x() + bar_patch.get_width()/2, bar_patch.get_height(), 
+                             str(counts_ordered[k]), ha='center', va='bottom')
+
+        if all_emotions_list:
+            combined_emotion_counts = Counter(all_emotions_list)
+            emotions_ordered = MELD_EMOTIONS_FROM_CFG
+            counts_ordered = [combined_emotion_counts.get(emo, 0) for emo in emotions_ordered]
+            total_overall = sum(counts_ordered)
+            
+            for emo_idx, emo_name in enumerate(emotions_ordered):
+                count = counts_ordered[emo_idx]
+                percentage = (count / total_overall * 100) if total_overall > 0 else 0
+                emotion_stats_md.append(f"| **Overall** | {emo_name} | {count} | {percentage:.2f}% |")
+
+            combined_ax = axes[num_valid_splits]
+            sns.barplot(x=emotions_ordered, y=counts_ordered, ax=combined_ax, palette="viridis")
+            combined_ax.set_title("Overall Distribution")
+            combined_ax.set_ylabel("") 
+            combined_ax.tick_params(axis='x', rotation=45)
+            for k, bar_patch in enumerate(combined_ax.patches): # Renamed bar to bar_patch
+                combined_ax.text(bar_patch.get_x() + bar_patch.get_width()/2, bar_patch.get_height(), 
+                             str(counts_ordered[k]), ha='center', va='bottom')
+        
+        plt.suptitle("Emotion Class Distribution")
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        emotion_dist_path = EDA_OUTPUTS_DIR / "processed_emotion_distribution.png"
+        plt.savefig(emotion_dist_path)
+        print(f"Saved emotion distribution plot to {emotion_dist_path}")
+        md_lines.append(f"![Emotion Distribution]({emotion_dist_path.relative_to(PROJECT_ROOT)})")
+        md_lines.append("\n")
+        md_lines.extend(emotion_stats_md)
+        plt.close(fig_emotion_dist)
+    else:
+        md_lines.append("\n- No valid splits found to analyze emotion distribution.")
+
+    # --- 2. Audio Duration ---
+    md_lines.append("\n## 2. Audio Duration (from Mel Spectrograms)")
     print("\n2. Analyzing Audio Duration from Mel Spectrograms...")
     fig_audio_dur, ax_audio_dur = plt.subplots(figsize=(10, 6))
-    all_durations_viz = [] # Renamed to avoid conflict with a potential variable from other cells if in notebook
+    all_durations_viz = [] 
+    audio_duration_stats_md = ["| Split   | Min (s) | Max (s) | Mean (s) | Median (s) |", "|:--------|--------:|--------:|---------:|-----------:|"]
 
     for split_name, dataset in splits_data.items():
-        if 'mel_spectrogram' not in dataset.column_names: # Check for singular form too
-             if 'mel_spectrograms' not in dataset.column_names:
-                print(f"Neither 'mel_spectrogram' nor 'mel_spectrograms' column found in {split_name}. Skipping audio duration.")
-                continue
-             feature_col_name = 'mel_spectrograms'
-        else:
-            feature_col_name = 'mel_spectrogram'
+        feature_col_name = 'input_features' 
+        if feature_col_name not in dataset.column_names:
+            msg = f"Column '{feature_col_name}' not found in {split_name}. Skipping audio duration."
+            print(msg)
+            md_lines.append(f"\n- <span style='color:orange;'>{msg}</span>")
+            continue
             
         durations = []
         for mel_spec_features in dataset[feature_col_name]:
-            if isinstance(mel_spec_features, np.ndarray) or torch.is_tensor(mel_spec_features):
-                 # Assuming [Time, Mels] or [Mels, Time] - need to be careful.
-                 # The old script assumed [Time, Mels] for .shape[0]
-                 # If it's a list of lists, convert to numpy/tensor first.
-                if isinstance(mel_spec_features, list):
-                    mel_spec_features = np.array(mel_spec_features)
-                num_frames = mel_spec_features.shape[0] if mel_spec_features.shape[0] > mel_spec_features.shape[1] else mel_spec_features.shape[1] # Heuristic for time dim
-                duration_sec = num_frames * (cfg.hop_length / cfg.sample_rate) # Use cfg for hop_length and sample_rate
+            if isinstance(mel_spec_features, list): 
+                mel_spec_features = np.array(mel_spec_features)
+
+            if isinstance(mel_spec_features, (np.ndarray, torch.Tensor)):
+                # MelSpectrogram transform from torchaudio produces (..., n_mels, time)
+                num_frames = mel_spec_features.shape[-1] # Time is the last dimension
+                duration_sec = num_frames * (config.hop_length / config.sample_rate)
                 durations.append(duration_sec)
             else:
-                print(f"Warning: mel_spectrogram in {split_name} is not an array/tensor, but {type(mel_spec_features)}. Skipping item.")
+                print(f"Warning: {feature_col_name} in {split_name} is not an array/tensor, but {type(mel_spec_features)}. Skipping item.")
         
         if durations:
-            sns.histplot(durations, ax=ax_audio_dur, label=f"{split_name.capitalize()} (mean: {np.mean(durations):.2f}s)", kde=True, element="step")
+            mean_dur, min_dur, max_dur, median_dur = np.mean(durations), np.min(durations), np.max(durations), np.median(durations)
+            sns.histplot(durations, ax=ax_audio_dur, label=f"{split_name.capitalize()} (mean: {mean_dur:.2f}s)", kde=True, element="step")
             all_durations_viz.extend(durations)
-            print(f"{split_name.capitalize()} - Audio duration (s): Min={np.min(durations):.2f}, Max={np.max(durations):.2f}, Mean={np.mean(durations):.2f}, Median={np.median(durations):.2f}")
+            print(f"{split_name.capitalize()} - Audio duration (s): Min={min_dur:.2f}, Max={max_dur:.2f}, Mean={mean_dur:.2f}, Median={median_dur:.2f}")
+            audio_duration_stats_md.append(f"| {split_name.capitalize()} | {min_dur:.2f} | {max_dur:.2f} | {mean_dur:.2f} | {median_dur:.2f} |")
         else:
-            print(f"No valid mel spectrograms found for duration analysis in {split_name} split.")
+            print(f"No valid mel spectrograms for duration analysis in {split_name} split.")
+            audio_duration_stats_md.append(f"| {split_name.capitalize()} | N/A | N/A | N/A | N/A |")
+
+    if all_durations_viz:
+        overall_min, overall_max, overall_mean, overall_median = np.min(all_durations_viz), np.max(all_durations_viz), np.mean(all_durations_viz), np.median(all_durations_viz)
+        audio_duration_stats_md.append(f"| **Overall** | {overall_min:.2f} | {overall_max:.2f} | {overall_mean:.2f} | {overall_median:.2f} |")
 
     ax_audio_dur.set_title("Audio Clip Duration Distribution (from Mel Spectrograms)")
     ax_audio_dur.set_xlabel("Duration (seconds)")
@@ -184,40 +207,48 @@ def perform_meld_eda(tensorboard_writer=None):
     audio_dur_path = EDA_OUTPUTS_DIR / "processed_audio_duration_distribution.png"
     plt.savefig(audio_dur_path)
     print(f"Saved audio duration plot to {audio_dur_path}")
-    # if tensorboard_writer and all_durations_viz:
-    #     tensorboard_writer.add_image("EDA/Processed_Audio_Duration_Distribution", plot_to_numpy(fig_audio_dur), 0)
-    #     tensorboard_writer.add_histogram("EDA/Processed_Overall_Audio_Durations", np.array(all_durations_viz), 0)
+    md_lines.append(f"![Audio Duration Distribution]({audio_dur_path.relative_to(PROJECT_ROOT)})")
+    md_lines.append("\n")
+    md_lines.extend(audio_duration_stats_md)
     plt.close(fig_audio_dur)
 
+    # --- 3. Text Length ---
+    md_lines.append("\n## 3. Text Length (Number of Tokens)")
     print("\n3. Analyzing Text Length (Number of Tokens from input_ids)...")
     fig_text_len, ax_text_len = plt.subplots(figsize=(10, 6))
-    all_token_lengths_viz = [] # Renamed
+    all_token_lengths_viz = []
+    text_length_stats_md = ["| Split   | Min Tokens | Max Tokens | Mean Tokens | Median Tokens |", "|---------|------------|------------|-------------|---------------|"]
 
     for split_name, dataset in splits_data.items():
         if 'input_ids' not in dataset.column_names:
-            print(f"'input_ids' column not found in {split_name} split. Skipping text length analysis.")
+            msg = f"'input_ids' column not found in {split_name} split. Skipping text length analysis."
+            print(msg)
+            md_lines.append(f"\n- <span style='color:orange;'>{msg}</span>")
             continue
 
         token_lengths = []
         if 'attention_mask' in dataset.column_names:
             for mask in dataset['attention_mask']:
-                 if isinstance(mask, (list, np.ndarray, torch.Tensor)):
-                    token_lengths.append(sum(mask))
-                 else:
-                    print(f"Warning: attention_mask item in {split_name} is not list/array/tensor. Type: {type(mask)}. Skipping item.")
-        else: # Fallback if no attention mask
-            for ids in dataset['input_ids']:
-                if isinstance(ids, (list, np.ndarray, torch.Tensor)):
-                    token_lengths.append(len(ids))
-                else:
-                    print(f"Warning: input_ids item in {split_name} is not list/array/tensor. Type: {type(ids)}. Skipping item.")
-
+                 if isinstance(mask, (list, np.ndarray, torch.Tensor)): token_lengths.append(sum(mask))
+                 else: print(f"Warning: attention_mask item in {split_name} is not list/array/tensor. Type: {type(mask)}. Skipping.")
+        elif 'input_ids' in dataset.column_names: 
+             for ids in dataset['input_ids']:
+                if isinstance(ids, (list, np.ndarray, torch.Tensor)): token_lengths.append(len(ids))
+                else: print(f"Warning: input_ids item in {split_name} is not list/array/tensor. Type: {type(ids)}. Skipping.")
+        
         if token_lengths:
-            sns.histplot(token_lengths, ax=ax_text_len, label=f"{split_name.capitalize()} (mean: {np.mean(token_lengths):.1f} tokens)", kde=True, element="step")
+            mean_len, min_len, max_len, median_len = np.mean(token_lengths), np.min(token_lengths), np.max(token_lengths), np.median(token_lengths)
+            sns.histplot(token_lengths, ax=ax_text_len, label=f"{split_name.capitalize()} (mean: {mean_len:.1f} tokens)", kde=True, element="step")
             all_token_lengths_viz.extend(token_lengths)
-            print(f"{split_name.capitalize()} - Token count: Min={np.min(token_lengths)}, Max={np.max(token_lengths)}, Mean={np.mean(token_lengths):.1f}, Median={np.median(token_lengths)}")
+            print(f"{split_name.capitalize()} - Token count: Min={min_len}, Max={max_len}, Mean={mean_len:.1f}, Median={median_len:.1f}")
+            text_length_stats_md.append(f"| {split_name.capitalize()} | {min_len} | {max_len} | {mean_len:.1f} | {median_len:.1f} |")
         else:
-            print(f"No valid input_ids found for text length analysis in {split_name} split.")
+            print(f"No valid input_ids/attention_mask for text length analysis in {split_name} split.")
+            text_length_stats_md.append(f"| {split_name.capitalize()} | N/A | N/A | N/A | N/A |")
+
+    if all_token_lengths_viz:
+        overall_min_len, overall_max_len, overall_mean_len, overall_median_len = np.min(all_token_lengths_viz), np.max(all_token_lengths_viz), np.mean(all_token_lengths_viz), np.median(all_token_lengths_viz)
+        text_length_stats_md.append(f"| **Overall** | {overall_min_len} | {overall_max_len} | {overall_mean_len:.1f} | {overall_median_len:.1f} |")
 
     ax_text_len.set_title("Text Length Distribution (Number of Tokens)")
     ax_text_len.set_xlabel("Number of Tokens")
@@ -227,85 +258,114 @@ def perform_meld_eda(tensorboard_writer=None):
     text_len_path = EDA_OUTPUTS_DIR / "processed_text_token_length_distribution.png"
     plt.savefig(text_len_path)
     print(f"Saved text length plot to {text_len_path}")
-    # if tensorboard_writer and all_token_lengths_viz:
-    #     tensorboard_writer.add_image("EDA/Processed_Text_Token_Length_Distribution", plot_to_numpy(fig_text_len), 0)
-    #     tensorboard_writer.add_histogram("EDA/Processed_Overall_Text_Token_Lengths", np.array(all_token_lengths_viz), 0)
+    md_lines.append(f"![Text Token Length Distribution]({text_len_path.relative_to(PROJECT_ROOT)})")
+    md_lines.append("\n")
+    md_lines.extend(text_length_stats_md)
     plt.close(fig_text_len)
 
+    # --- 4. Speaker Emotion Patterns ---
+    md_lines.append("\n## 4. Speaker Emotion Patterns (Training Split)")
     print("\n4. Analyzing Speaker Emotion Patterns (from Training data if available)...")
     train_dataset = splits_data.get('train')
-    # Assuming 'speaker' column exists from create_dataset_from_csv in build_hf_dataset.py
-    # The column name in HF dataset is usually 'raw_speaker' if not explicitly mapped otherwise.
-    # Let's try to be flexible or rely on 'speaker' if present.
-    speaker_col_name = 'speaker' 
-    if train_dataset and 'speaker' not in train_dataset.column_names and 'raw_speaker' in train_dataset.column_names:
-        speaker_col_name = 'raw_speaker'
-        
-    label_col_for_speaker = 'label'
-    if train_dataset and 'label' not in train_dataset.column_names and 'labels' in train_dataset.column_names:
-        label_col_for_speaker = 'labels'
+    speaker_col_for_analysis = 'speaker' if train_dataset and 'speaker' in train_dataset.column_names else 'raw_speaker' if train_dataset and 'raw_speaker' in train_dataset.column_names else None
+    label_col_for_speaker_analysis = 'label' if train_dataset and 'label' in train_dataset.column_names else 'labels' if train_dataset and 'labels' in train_dataset.column_names else None
 
-    if train_dataset and speaker_col_name in train_dataset.column_names and label_col_for_speaker in train_dataset.column_names:
+    if train_dataset and speaker_col_for_analysis and label_col_for_speaker_analysis:
         df_train = train_dataset.to_pandas()
-        # Ensure labels are mapped to names before counting
-        df_train['emotion_name'] = df_train[label_col_for_speaker].apply(lambda x: ID_TO_EMOTION.get(x, "Unknown"))
-        speaker_emotion_counts = df_train.groupby(speaker_col_name)['emotion_name'].apply(Counter).unstack(fill_value=0)
+        df_train['emotion_name'] = df_train[label_col_for_speaker_analysis].apply(lambda x: ID_TO_EMOTION_FROM_CFG.get(x, "Unknown"))
         
-        if not speaker_emotion_counts.empty:
-            top_n_speakers = speaker_emotion_counts.sum(axis=1).nlargest(15).index
-            speaker_emotion_counts_top_n = speaker_emotion_counts.loc[top_n_speakers, MELD_EMOTIONS]
+        # Group by speaker and then by emotion_name to get counts
+        speaker_emotion_grouped = df_train.groupby([speaker_col_for_analysis, 'emotion_name']).size().unstack(fill_value=0)
+        
+        # Ensure all MELD emotions are columns, even if some speakers don't have them
+        for emo in MELD_EMOTIONS_FROM_CFG:
+            if emo not in speaker_emotion_grouped.columns:
+                speaker_emotion_grouped[emo] = 0
+        speaker_emotion_pivot = speaker_emotion_grouped[MELD_EMOTIONS_FROM_CFG] # Order columns
 
-            if not speaker_emotion_counts_top_n.empty:
-                fig_speaker, ax_speaker = plt.subplots(figsize=(12, 7))
-                speaker_emotion_counts_top_n.plot(kind='bar', stacked=True, ax=ax_speaker, colormap='viridis')
-                ax_speaker.set_title(f"Emotion Distribution for Top {len(top_n_speakers)} Speakers (Train Split)")
-                ax_speaker.set_xlabel("Speaker")
-                ax_speaker.set_ylabel("Number of Utterances")
-                ax_speaker.tick_params(axis='x', rotation=45)
-                ax_speaker.legend(title='Emotion')
-                plt.tight_layout()
-                speaker_path = EDA_OUTPUTS_DIR / "processed_speaker_emotion_distribution.png"
-                plt.savefig(speaker_path)
-                print(f"Saved speaker emotion distribution plot to {speaker_path}")
-                # if tensorboard_writer:
-                #     tensorboard_writer.add_image("EDA/Processed_Speaker_Emotion_Distribution", plot_to_numpy(fig_speaker), 0)
-                plt.close(fig_speaker)
+        speaker_utterance_counts = df_train[speaker_col_for_analysis].value_counts()
+
+        if not speaker_emotion_pivot.empty:
+            top_n_speakers = 15 
+            top_speakers_names = speaker_utterance_counts.nlargest(top_n_speakers).index
+            
+            speaker_emotion_pivot_top_n = speaker_emotion_pivot.loc[speaker_emotion_pivot.index.isin(top_speakers_names)]
+
+            if not speaker_emotion_pivot_top_n.empty:
+                fig_speaker_emo, ax_speaker_emo = plt.subplots(figsize=(15, 8))
+                speaker_emotion_pivot_top_n.plot(kind='bar', stacked=True, ax=ax_speaker_emo, colormap='viridis')
+                ax_speaker_emo.set_title(f"Emotion Distribution for Top {len(speaker_emotion_pivot_top_n)} Speakers (Train Split)")
+                ax_speaker_emo.set_xlabel("Speaker")
+                ax_speaker_emo.set_ylabel("Number of Utterances")
+                ax_speaker_emo.legend(title="Emotion", bbox_to_anchor=(1.05, 1), loc='upper left')
+                plt.xticks(rotation=45, ha='right')
+                plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust layout for legend
+                speaker_emo_path = EDA_OUTPUTS_DIR / "speaker_emotion_patterns.png"
+                plt.savefig(speaker_emo_path)
+                print(f"Saved speaker emotion patterns plot to {speaker_emo_path}")
+                md_lines.append(f"![Speaker Emotion Patterns]({speaker_emo_path.relative_to(PROJECT_ROOT)})")
+                
+                md_lines.append("\n### Top Speaker Emotion Counts (Train Split)")
+                md_lines.append("| Speaker | Total Utterances | Most Frequent Emotion | Count | Less Frequent Emotions (sample) |")
+                md_lines.append("|---------|-----------------:|:----------------------|------:|:--------------------------------|")
+                for speaker_name in top_speakers_names[:5]: # Show top 5
+                    total_utts = speaker_utterance_counts.get(speaker_name, 0)
+                    if speaker_name in speaker_emotion_pivot.index:
+                        speaker_data = speaker_emotion_pivot.loc[speaker_name]
+                        most_frequent_emotion = speaker_data.idxmax()
+                        most_frequent_count = speaker_data.max()
+                        other_emotions = ", ".join([f"{emo}({count})" for emo, count in speaker_data[speaker_data > 0].sort_values(ascending=False).items() if emo != most_frequent_emotion][:2])
+                        md_lines.append(f"| {speaker_name} | {total_utts} | {most_frequent_emotion} | {most_frequent_count} | {other_emotions} |")
+                    else:
+                        md_lines.append(f"| {speaker_name} | {total_utts} | N/A | N/A | N/A |")
             else:
-                print("Not enough speaker data for top N to generate speaker emotion plot.")
+                msg = "Not enough data for top speakers to plot speaker emotion patterns."
+                print(msg)
+                md_lines.append(f"\n- <span style='color:orange;'>{msg}</span>")
         else:
-            print("Speaker emotion counts are empty.")
+            msg = "Could not generate speaker emotion pivot table (possibly no speaker data)."
+            print(msg)
+            md_lines.append(f"\n- <span style='color:orange;'>{msg}</span>")
     else:
-        missing_cols = []
-        if not train_dataset: missing_cols.append("train_dataset")
-        else:
-            if speaker_col_name not in train_dataset.column_names: missing_cols.append(speaker_col_name)
-            if label_col_for_speaker not in train_dataset.column_names: missing_cols.append(label_col_for_speaker)
-        print(f"Missing data/columns for speaker analysis: {', '.join(missing_cols)}. Skipping speaker analysis.")
+        msg = "Training data or required 'speaker'/'label' columns not available for speaker emotion pattern analysis."
+        print(msg)
+        md_lines.append(f"\n- <span style='color:orange;'>{msg}</span>")
 
-    print(f"\nProcessed Features EDA finished. Plots saved to {EDA_OUTPUTS_DIR}")
+    # --- 5. Dataset Summary ---
+    md_lines.append("\n## 5. Dataset Summary")
+    print("\n5. Dataset Summary...")
+    md_lines.append("| Split   | Number of Samples | Features (Columns) |")
+    md_lines.append("|---------|-------------------|--------------------|")
+    for split_name, dataset in splits_data.items():
+        md_lines.append(f"| {split_name.capitalize()} | {len(dataset)} | `{', '.join(dataset.column_names)}` |")
 
-def main(cfg_param: BaseConfig = None): # Added cfg_param
-    global cfg # Declare cfg as global to modify it
-    active_cfg = None # To be used if main creates its own cfg, not strictly needed if perform_meld_eda uses global cfg
+    md_lines.append("\n## 6. Correlation Analysis (Placeholder)")
+    md_lines.append("Further analysis could explore correlations, e.g., between text length and audio duration.")
+    
+    print("\nEDA (Processed Features) complete.")
+    md_lines.append("\n---\nReport End.")
 
-    if cfg_param:
-        cfg = cfg_param # Update global cfg for perform_meld_eda
-        # active_cfg = cfg_param # Not strictly needed if perform_meld_eda directly uses the updated global cfg
-        print(f"Processed Features EDA using configuration for dataset: {cfg.dataset_name}, input_mode: {cfg.input_mode}")
-    else:
-        # This branch is for when the script is run directly and no config is passed.
-        # The global cfg is already initialized at the top.
-        # active_cfg = BaseConfig(dataset_name="meld") # No need to create another local instance if global is used.
-        # cfg = active_cfg # Ensure global cfg is this default one if we were to re-assign it here.
-        print(f"Processed Features EDA using default (globally initialized) configuration for dataset: {cfg.dataset_name}")
+    try:
+        with open(markdown_report_path, 'w', encoding='utf-8') as f:
+            f.write("\n".join(md_lines))
+        print(f"Markdown EDA report saved to {markdown_report_path}")
+    except Exception as e:
+        print(f"Error writing markdown report to {markdown_report_path}: {e}")
 
-    # perform_meld_eda will use the global cfg, which is now set based on cfg_param or the initial global default.
-    perform_meld_eda()
-    print("\nEDA completed.")
+def main(cfg_param: BaseConfig = None):
+    """
+    Main function to run the EDA on processed MELD features.
+    Can be called with a specific config.
+    """
+    current_cfg = cfg_param
+    if current_cfg is None:
+        print("No config passed to EDA main, using default BaseConfig for MELD.")
+        # Ensure default params for audio are set if not in a YAML
+        # BaseConfig now has these defaults, so direct instantiation is fine.
+        current_cfg = BaseConfig(dataset_name="meld") # Removed **default_audio_params
+    
+    markdown_report_file_path = PROJECT_ROOT / "processed_eda_report.md"
+    perform_meld_eda(config=current_cfg, markdown_report_path=markdown_report_file_path)
 
-if __name__ == "__main__":
-    # The script currently instantiates its own BaseConfig.
-    # If called from main.py, main.py would create and pass the config.
-    # main() # Old call
-    default_run_cfg = BaseConfig(dataset_name="meld") # Example of creating a config for standalone run
-    main(cfg_param=default_run_cfg) 
+if __name__ == '__main__':
+    main()

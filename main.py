@@ -68,8 +68,27 @@ def _run_data_preparation(cfg: BaseConfig, args: argparse.Namespace):
             )
             print("Hugging Face dataset preparation complete.")
             if datasets:
-                for split_name, ds in datasets.items():
-                    print(f"  {split_name.capitalize()} split: {len(ds)} items.")
+                for split_name, ds_object in datasets.items():
+                    if ds_object:
+                        # Ensure processed_hf_dataset_dir is a Path object and points to the parent directory
+                        save_path = cfg.processed_hf_dataset_dir / split_name
+                        ensure_dir(save_path.parent) # Ensure parent dir (e.g. .../hf_datasets/) exists
+                        print(f"  Saving {split_name.capitalize()} dataset ({len(ds_object)} items) to disk at: {save_path}")
+                        try:
+                            ds_object.save_to_disk(str(save_path))
+                            print(f"  {split_name.capitalize()} dataset saved successfully.")
+                        except Exception as e_save:
+                            print(f"  ERROR: Could not save {split_name} dataset to {save_path}: {e_save}")
+                    else:
+                        print(f"  No dataset object returned for {split_name} split, cannot save.")
+            else:
+                print("  prepare_meld_hf_dataset returned no datasets dict, nothing to save.")
+
+            # Original printout of dataset lengths (can be redundant now but kept for consistency)
+            if datasets: 
+                for split_name, ds_object_print in datasets.items(): # Renamed ds to ds_object_print for clarity
+                    print(f"  {split_name.capitalize()} split from returned dict: {len(ds_object_print)} items processed.")
+
         except Exception as e:
             print(f"Error during prepare_meld_hf_dataset: {e}")
     else:
@@ -97,36 +116,36 @@ def _run_training(cfg: BaseConfig, args: argparse.Namespace, model_class, traine
     data_module.prepare_data()
     _ = data_module.setup() # datasets not directly used here, dataloaders are
     dataloaders = data_module.get_dataloaders()
-    
+        
     trainer = trainer_class(cfg=cfg, model_class=model_class)
     trainer.train(
         train_dataloader=dataloaders['train'],
         val_dataloader=dataloaders['dev']
     )
     print("Training complete.")
-    
+        
     eval_split_after_train = getattr(cfg, 'eval_split', 'test')
     print(f"Evaluating on {eval_split_after_train} set after training...")
     metrics = trainer.evaluate(
         dataloader=dataloaders[eval_split_after_train],
     )
     print(f"Metrics on {eval_split_after_train} set: {metrics}")
-    
+        
 def _run_evaluation(cfg: BaseConfig, args: argparse.Namespace, model_class, trainer_class):
     print(f"Evaluating model from: {args.evaluate_model}")
     model_checkpoint_path = Path(args.evaluate_model)
     if not model_checkpoint_path.exists():
         print(f"Error: Model checkpoint {model_checkpoint_path} not found.")
         return
-    
+        
     data_module = MELDDataModule(cfg)
     data_module.prepare_data()
     _ = data_module.setup()
     dataloaders = data_module.get_dataloaders()
-    
+        
     trainer = trainer_class(cfg=cfg, model_class=model_class) 
     trainer.load_model(str(model_checkpoint_path))
-    
+        
     eval_split = getattr(cfg, 'eval_split', 'test')
     print(f"Evaluating on {eval_split} split...")
     metrics = trainer.evaluate(
@@ -166,7 +185,7 @@ def _run_inference(cfg: BaseConfig, args: argparse.Namespace, model_class):
     except Exception as e:
         print(f"Error loading model state_dict from {model_checkpoint_path}: {e}")
         return
-    
+        
     model_instance.to(cfg.device)
     model_instance.eval()
 
