@@ -354,33 +354,53 @@ def main():
     """Main function."""
     args = parse_args()
 
-    config_class = get_default_config_class_for_arch(args.architecture)
-    if not config_class:
-        print(f"Critical: No config class found for architecture '{args.architecture}'. Exiting.")
-        return
+    # Determine the YAML configuration path to load
+    yaml_path_to_load = args.config_file
+    if not yaml_path_to_load and args.architecture:
+        # Default to architecture-specific YAML if no general config_file is given
+        yaml_path_to_load = os.path.join(CONFIG_DIR, f"{args.architecture}_default.yaml")
 
-    # Determine YAML configuration path
-    yaml_path_to_load = None
-    if args.config_file:
-        yaml_path_to_load = args.config_file
+    if yaml_path_to_load and not os.path.exists(yaml_path_to_load):
+        print(f"Warning: Specified YAML config file not found: {yaml_path_to_load}. Proceeding with defaults and CLI args.")
+        yaml_path_to_load = None
+    elif yaml_path_to_load:
         print(f"Attempting to load specified YAML config: {yaml_path_to_load}")
-    else:
-        default_yaml_path = Path(f"configs/{args.architecture}_default.yaml")
-        if default_yaml_path.exists():
-            yaml_path_to_load = str(default_yaml_path)
-            print(f"No config_file specified. Found and attempting to load default YAML: {yaml_path_to_load}")
-        else:
-            print(f"No config_file specified and default YAML 'configs/{args.architecture}_default.yaml' not found.")
-            print("Proceeding with class defaults and CLI argument overrides only.")
 
-    # Instantiate configuration
-    # The architecture_name_cli from args.architecture is crucial for BaseConfig
-    # to set up paths correctly and manage overrides.
+
+    # Dynamically get the config class based on architecture
+    # The architecture name for config class lookup can come from CLI or be inferred
+    # (e.g. from a 'model_type' field in a generic YAML, or a default)
+    # For now, assume args.architecture is the primary source if specific config class is needed.
+    # This part might need refinement based on how architecture dictates config class vs. generic YAML.
+
+    # Get the appropriate configuration class
+    # This assumes get_config_class can handle arch_for_config_class being None
+    # if the YAML is expected to define the architecture.
+    # Based on the error, MLPFusionConfig was already selected, so this part of your code works.
+    arch_for_config_class = args.architecture # This might need to be smarter if arch isn't passed
+                                            # but is defined in the YAML.
+                                            # For now, the error shows MLPFusionConfig is already chosen.
+
+    # Get the appropriate configuration class
+    # This assumes get_config_class can handle arch_for_config_class being None
+    # if the YAML is expected to define the architecture.
+    # Based on the error, MLPFusionConfig was already selected, so this part of your code works.
+    config_class = get_config_class(architecture_name=arch_for_config_class, 
+                                    dataset_name=args.dataset_name, 
+                                    input_mode=args.input_mode)
+    
     cfg = config_class.from_args(args,
-                                 architecture_name_cli=args.architecture,
+                                 architecture_name_cli=args.architecture, # Pass CLI architecture
                                  yaml_config_path=yaml_path_to_load)
 
-    print(f"Configuration loaded for architecture: {cfg.architecture_name}, dataset: {cfg.dataset_name}, input_mode: {cfg.input_mode}")
+    # ── Backfill experiment_name if the Config class didn't define it ──
+    if not hasattr(cfg, "experiment_name"):
+        # Prefer a supplied CLI --experiment_name; otherwise use the architecture name
+        setattr(cfg, "experiment_name",
+                args.experiment_name if args.experiment_name else args.architecture)
+
+    print(f"Configuration loaded for architecture: {cfg.architecture_name_cli}, "
+          f"dataset: {cfg.dataset_name}, input_mode: {cfg.input_mode}")
     print(f"Experiment name: {cfg.experiment_name}")
     print(f"Device set to: {cfg.device}")
     print(f"Model save directory: {cfg.model_save_dir}")

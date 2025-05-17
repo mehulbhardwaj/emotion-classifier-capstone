@@ -533,40 +533,6 @@ Then, from the **project root directory**, run the script:
 ```
 This will process all `.mmd` source files in `docs/diagrams/` and output the corresponding `.png` images into the same `docs/diagrams/` directory. These PNGs will then be displayed in this README.
 
-For reference, the content of `docs/diagrams/render_diagrams` is:
-```bash
-#!/bin/bash
-# Script to render all .mmd files in docs/diagrams to .png
-
-# This script assumes it is being run from the project root directory.
-DIAGRAM_SRC_DIR="docs/diagrams"
-OUTPUT_DIR="docs/diagrams"
-
-if [ ! -d "$DIAGRAM_SRC_DIR" ]; then
-  echo "Source directory $DIAGRAM_SRC_DIR not found."
-  echo "Ensure you are in the project root directory when running ./docs/diagrams/render_diagrams"
-  exit 1
-fi
-
-# Ensure output directory exists
-mkdir -p "$OUTPUT_DIR"
-
-for mmd_file in "$DIAGRAM_SRC_DIR"/*.mmd; do
-  if [ -f "$mmd_file" ]; then
-    base_name=$(basename "$mmd_file" .mmd)
-    # Output PNG file to the OUTPUT_DIR
-    png_file="$OUTPUT_DIR/$base_name.png"
-    echo "Rendering $mmd_file to $png_file..."
-    
-    # Use npx if mmdc is not globally installed, or mmdc directly
-    npx @mermaid-js/mermaid-cli -i "$mmd_file" -o "$png_file"
-    # Example with mmdc if installed globally:
-    # mmdc -i "$mmd_file" -o "$png_file"
-  fi
-done
-
-echo "All diagrams rendered to $OUTPUT_DIR as PNGs."
-```
 
 ### Customizing Output
 
