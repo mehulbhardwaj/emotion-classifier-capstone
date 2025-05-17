@@ -1,0 +1,10 @@
+audio_encoder_model_name: facebook/wav2vec2-base-960h
+audio_feature_dim: 768
+dataset_name: meld
+input_mode: audio_text
+learning_rate: 0.0001
+mlp_dropout_rate: 0.1
+mlp_hidden_size: 768
+output_dim: 7
+text_encoder_model_name: distilroberta-base
+text_feature_dim: 512

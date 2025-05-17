@@ -48,6 +48,7 @@ asr_model_name: "openai/whisper-tiny.en" # For --inference mode if ASR is used
 limit_dialogues_train: null
 limit_dialogues_dev: null
 limit_dialogues_test: null
+#num_dataloader_workers: 0
 
 # --- MLP Fusion Specific Parameters ---
 text_encoder_model_name: "distilroberta-base"

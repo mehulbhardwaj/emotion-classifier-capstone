@@ -20,19 +20,24 @@ DEFAULT_TEXT_FEATURE_DIM = 512
 DEFAULT_AUDIO_ENCODER_MODEL_NAME = "microsoft/wavlm-base-plus"
 DEFAULT_AUDIO_FEATURE_DIM = 768
 DEFAULT_ASR_MODEL_NAME = "openai/whisper-base" # For ASR tasks
+DEFAULT_ASR_MODEL_NAME_FOR_HF_DATASET: Optional[str] = None # Explicitly None for data prep
 
 DEFAULT_SAMPLE_RATE = 16000
+DEFAULT_TEXT_MAX_LENGTH_FOR_HF_DATASET = 128 # Matches old MAX_SEQ_LENGTH_TEXT
 
 # --- Default Training Hyperparameters (can be overridden) ---
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_LEARNING_RATE = 1e-4
 DEFAULT_NUM_EPOCHS = 20
 DEFAULT_EARLY_STOPPING_PATIENCE = 5
-DEFAULT_MAX_SEQ_LENGTH_TEXT = 128
+DEFAULT_OPTIMIZER_NAME = "AdamW"
+DEFAULT_LR_SCHEDULER_NAME: Optional[str] = None # e.g., "linear", "cosine"
+DEFAULT_GRADIENT_ACCUMULATION_STEPS = 1
+# DEFAULT_MAX_SEQ_LENGTH_TEXT = 128 # Replaced by DEFAULT_TEXT_MAX_LENGTH_FOR_HF_DATASET for clarity
 DEFAULT_MAX_AUDIO_DURATION_SECONDS = 15
 
 # --- Default Technical Settings (can be overridden) ---
-DEFAULT_DEVICE_NAME = "cuda" if torch.cuda.is_available() else "cpu"
+DEFAULT_DEVICE_NAME = "cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
 DEFAULT_RANDOM_SEED = 42
 DEFAULT_NUM_DATALOADER_WORKERS = min(os.cpu_count(), 4) if os.cpu_count() else 1
 DEFAULT_MIXED_PRECISION_TRAINING = True
@@ -40,7 +45,17 @@ DEFAULT_MIXED_PRECISION_TRAINING = True
 # --- Default Data Preparation Switches ---
 DEFAULT_RUN_MP4_TO_WAV_CONVERSION = True
 DEFAULT_RUN_HF_DATASET_CREATION = True
+DEFAULT_USE_ASR_FOR_TEXT_GENERATION_IN_HF_DATASET = False
 DEFAULT_FFMPEG_PATH = "ffmpeg"
+
+# --- Default Evaluation & Inference Settings ---
+DEFAULT_EVAL_SPLIT = "dev" # Split to use for evaluation after training or standalone eval
+DEFAULT_INFER_NUM_EXAMPLES: Optional[int] = 10 # Limit examples for console print during inference
+
+# --- Default Dataset Limits for quick testing (can be overridden) ---
+DEFAULT_LIMIT_DIALOGUES_TRAIN: Optional[int] = None
+DEFAULT_LIMIT_DIALOGUES_DEV: Optional[int] = None
+DEFAULT_LIMIT_DIALOGUES_TEST: Optional[int] = None
 
 # --- Default Audio Feature Extraction Parameters ---
 DEFAULT_N_FFT = 2048
@@ -111,14 +126,20 @@ class BaseConfig:
         self.audio_feature_dim = DEFAULT_AUDIO_FEATURE_DIM
         self.sample_rate = DEFAULT_SAMPLE_RATE
 
-        self.asr_model_name = DEFAULT_ASR_MODEL_NAME
+        self.asr_model_name = DEFAULT_ASR_MODEL_NAME # For inference if ASR is used
+        self.asr_model_name_for_hf_dataset = DEFAULT_ASR_MODEL_NAME_FOR_HF_DATASET # For data prep
+        self.use_asr_for_text_generation_in_hf_dataset = DEFAULT_USE_ASR_FOR_TEXT_GENERATION_IN_HF_DATASET
+        self.text_max_length_for_hf_dataset = DEFAULT_TEXT_MAX_LENGTH_FOR_HF_DATASET
         self.load_asr_model_on_init = (self.input_mode == "audio_only_asr")
 
         self.batch_size = DEFAULT_BATCH_SIZE
         self.learning_rate = DEFAULT_LEARNING_RATE
         self.num_epochs = DEFAULT_NUM_EPOCHS
         self.early_stopping_patience = DEFAULT_EARLY_STOPPING_PATIENCE
-        self.max_seq_length_text = DEFAULT_MAX_SEQ_LENGTH_TEXT
+        self.optimizer_name = DEFAULT_OPTIMIZER_NAME
+        self.lr_scheduler_name = DEFAULT_LR_SCHEDULER_NAME
+        self.gradient_accumulation_steps = DEFAULT_GRADIENT_ACCUMULATION_STEPS
+        # self.max_seq_length_text = DEFAULT_MAX_SEQ_LENGTH_TEXT # Replaced
         self.max_audio_duration_seconds = DEFAULT_MAX_AUDIO_DURATION_SECONDS
 
         self.device_name = DEFAULT_DEVICE_NAME
@@ -130,6 +151,13 @@ class BaseConfig:
         self.run_mp4_to_wav_conversion = DEFAULT_RUN_MP4_TO_WAV_CONVERSION
         self.run_hf_dataset_creation = DEFAULT_RUN_HF_DATASET_CREATION
         self.ffmpeg_path = DEFAULT_FFMPEG_PATH
+
+        self.eval_split = DEFAULT_EVAL_SPLIT
+        self.infer_num_examples = DEFAULT_INFER_NUM_EXAMPLES
+
+        self.limit_dialogues_train = DEFAULT_LIMIT_DIALOGUES_TRAIN
+        self.limit_dialogues_dev = DEFAULT_LIMIT_DIALOGUES_DEV
+        self.limit_dialogues_test = DEFAULT_LIMIT_DIALOGUES_TEST
 
         # CSV columns will be set by _update_dataset_specifics()
         self.csv_text_col_name: Optional[str] = None
@@ -197,18 +225,18 @@ class BaseConfig:
 
     def _set_device(self):
         """Set up the torch device based on self.device_name."""
-        if self.device_name == "cuda" and not torch.cuda.is_available():
+        if self.device_name.lower() == "cuda" and not torch.cuda.is_available():
             print("Warning: CUDA requested but not available. Falling back to CPU.")
             self.device_name = "cpu"
-        elif self.device_name == "mps" and hasattr(torch.backends, "mps") and not torch.backends.mps.is_available():
-            # Check for MPS availability more carefully
-            if not hasattr(torch.backends.mps, "is_built") or not torch.backends.mps.is_built():
-                 print("Warning: MPS requested but not built. Falling back to CPU.")
-                 self.device_name = "cpu"
-            elif not torch.backends.mps.is_available():
-                 print("Warning: MPS requested but not available (is_available() is False). Falling back to CPU.")
-                 self.device_name = "cpu"
-
+        elif self.device_name.lower() == "mps":
+            if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available() or not torch.backends.mps.is_built():
+                print("Warning: MPS requested but not available/built. Falling back to CPU.")
+                self.device_name = "cpu"
+            # else: # MPS is available and built, keep device_name as mps
+            #     pass 
+        # Implicitly, if neither CUDA nor MPS is specifically requested and available, it might remain/default to CPU
+        # or whatever DEFAULT_DEVICE_NAME resolved to initially.
+        # The DEFAULT_DEVICE_NAME logic is now smarter too.
 
         self.device = torch.device(self.device_name)
 
@@ -395,5 +423,5 @@ class BaseConfig:
         # Add more validation as needed
         return True
 
-print(f"BaseConfig class defined. Default device can be determined via an instance: BaseConfig().device")
+print(f"BaseConfig class defined. Default device can be determined via an instance: BaseConfig().device_name") # Changed to device_name for clarity
 ### common/config.py content ends ### 

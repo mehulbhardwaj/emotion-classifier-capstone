@@ -14,14 +14,16 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import Wav2Vec2Processor, WhisperProcessor
 import torchaudio
 from datasets import load_from_disk
+import pytorch_lightning as pl
+from typing import Optional
 
 from .utils import ensure_dir
 
 
-class MELDDataModule:
+class MELDDataModule(pl.LightningDataModule):
     """
     Data module for loading and processing MELD dataset using pre-built Hugging Face datasets.
-    Handles loading HF datasets and creating dataloaders.
+    Handles loading HF datasets and creating dataloaders. Now a LightningDataModule.
     """
     
     def __init__(self, cfg):
@@ -31,10 +33,11 @@ class MELDDataModule:
         Args:
             cfg: Configuration object with data paths and parameters
         """
+        super().__init__()
         self.cfg = cfg
         self.splits = ['train', 'dev', 'test']
-        self.dataloaders = {}
         self.datasets = {}
+        self.dataloaders_cache = {}
         
     def _get_hf_dataset_path(self, split):
         """
@@ -65,6 +68,7 @@ class MELDDataModule:
         """
         Checks if the processed Hugging Face dataset directory structure seems to exist.
         Actual data loading happens in setup().
+        This method is called once per process, typically for downloads or initial checks.
         """
         # Base directory where hf_datasets for the current dataset should be
         # e.g. data/processed/meld/features/hf_datasets
@@ -72,7 +76,8 @@ class MELDDataModule:
         if not base_hf_dir.exists():
             print(f"Warning: Base Hugging Face dataset directory not found: {base_hf_dir}")
             print(f"Please ensure data preparation (e.g., main.py --prepare_data) has been run for dataset '{self.cfg.dataset_name}'.")
-            return False # Indicates potential issue
+            # Not raising an error here, setup() will handle it more specifically.
+            return
         
         # Check for one of the splits as a further heuristic
         # This is just a high-level check. Detailed check per split in setup().
@@ -82,69 +87,143 @@ class MELDDataModule:
             print(f"  This might indicate that data preparation is incomplete or paths are misconfigured.")
         
         print(f"Data preparation check: Using Hugging Face datasets from {base_hf_dir} (expected structure).")
-        return True
     
-    def setup(self, stage=None):
+    def setup(self, stage: Optional[str] = None):
         """
         Setup the datasets for each split by loading preprocessed Hugging Face datasets.
+        Called on every GPU in DDP.
         
         Args:
-            stage (str, optional): Stage ('fit', 'validate', 'test', or None)
+            stage (str, optional): Stage ('fit', 'validate', 'test', or None). 
+                                   If None, sets up all splits.
         """
-        print(f"Setting up MELDDataModule for dataset: {self.cfg.dataset_name}")
-        for split in self.splits:
-            hf_dataset_path = self._get_hf_dataset_path(split)
-            print(f"Attempting to load Hugging Face dataset for {split} split from: {hf_dataset_path}")
-            
-            if not hf_dataset_path.exists() or not hf_dataset_path.is_dir():
-                print(f"ERROR: Preprocessed Hugging Face dataset for '{split}' split not found at {hf_dataset_path}.")
-                print(f"Please run data preparation (e.g., main.py --prepare_data for dataset '{self.cfg.dataset_name}').")
-                # Decide on behavior: raise error or create empty dataset?
-                # For training/eval, an error is usually better if data is missing.
-                raise FileNotFoundError(f"HF Dataset for {split} split not found at {hf_dataset_path}. Run data preparation.")
+        print(f"Setting up MELDDataModule for stage: {stage}, dataset: {self.cfg.dataset_name}")
+        self.datasets = {}
+        splits_to_load = []
 
+        if stage == 'fit' or stage is None:
+            splits_to_load.extend(['train', 'dev'])
+        if stage == 'validate': # Explicitly for validation pass if trainer.validate is called
+            splits_to_load.append('dev')
+        if stage == 'test' or stage is None:
+            splits_to_load.append('test')
+        if stage == 'predict': # For inference/prediction
+            # Determine split based on cfg.eval_split or other inference settings if needed
+            # For now, assuming predict might use dev or test, or a specific inference split
+            # This part might need more specific logic based on how predict stage is used.
+            splits_to_load.append(getattr(self.cfg, 'eval_split', 'dev')) 
+
+        splits_to_load = sorted(list(set(splits_to_load))) # Unique, sorted splits
+
+        for split_name in splits_to_load:
+            dataset_path = self._get_hf_dataset_path(split_name)
+            if not dataset_path.exists():
+                print(f"Warning: Hugging Face dataset for split '{split_name}' not found at {dataset_path}.")
+                print(f"Please run data preparation first (e.g., main.py --prepare_data).")
+                self.datasets[split_name] = None 
+                continue
+            
+            print(f"DEBUG: MELDDataModule.setup() - About to load raw HF '{split_name}' split from: {dataset_path}")
             try:
-                loaded_hf_split_dataset = load_from_disk(str(hf_dataset_path))
-                self.datasets[split] = MELDDataset(
-                    hf_dataset_split=loaded_hf_split_dataset,
-                    cfg=self.cfg,
-                    split_name=split # Pass split name for context if needed
-                )
-                print(f"Successfully loaded and wrapped {split} HF dataset with {len(self.datasets[split])} samples.")
-                print(f"  Columns in {split} HF dataset: {loaded_hf_split_dataset.column_names}")
+                from datasets import load_from_disk as hf_load_from_disk
+                raw_hf_dataset = hf_load_from_disk(str(dataset_path))
+                print(f"DEBUG: MELDDataModule.setup() - Successfully loaded raw HF '{split_name}' split. Length: {len(raw_hf_dataset) if raw_hf_dataset else 'None'}")
+                
+                # Wrap the raw Hugging Face dataset with our MELDDataset custom class
+                if raw_hf_dataset:
+                    self.datasets[split_name] = MELDDataset(raw_hf_dataset, self.cfg, split_name=split_name)
+                    print(f"DEBUG: MELDDataModule.setup() - Wrapped HF '{split_name}' split with MELDDataset. Length: {len(self.datasets[split_name])}")
+                else:
+                    self.datasets[split_name] = None
+                    print(f"DEBUG: MELDDataModule.setup() - Raw HF '{split_name}' split was None, so MELDDataset wrapper is None.")
+
             except Exception as e:
-                print(f"ERROR: Failed to load Hugging Face dataset for '{split}' split from {hf_dataset_path}: {e}")
-                raise e # Re-raise the exception
-        
-        return self.datasets
+                print(f"DEBUG: MELDDataModule.setup() - ERROR processing '{split_name}' split from {dataset_path}: {e}")
+                self.datasets[split_name] = None 
+                if stage == 'fit' and split_name in ['train', 'dev']:
+                    print(f"CRITICAL: Failed to process crucial '{split_name}' split for fitting stage. Raising error.")
+                    raise e
+
+        # Assign to specific attributes for PL compatibility if splits were loaded and wrapped
+        # This is somewhat redundant now if self.datasets correctly holds MELDDataset instances
+        if 'train' in self.datasets and isinstance(self.datasets['train'], MELDDataset):
+            self.train_dataset = self.datasets['train']
+        else:
+            self.train_dataset = None # Or handle error
+
+        if 'dev' in self.datasets and isinstance(self.datasets['dev'], MELDDataset):
+            self.val_dataset = self.datasets['dev'] # PyTorch Lightning expects val_dataset
+        else:
+            self.val_dataset = None
+
+        if 'test' in self.datasets and isinstance(self.datasets['test'], MELDDataset):
+            self.test_dataset = self.datasets['test']
+        else:
+            self.test_dataset = None
+
+    def _create_dataloader(self, split_name: str) -> DataLoader:
+        """Helper to create a DataLoader for a given split."""
+        if split_name not in self.datasets:
+            print(f"Dataset for {split_name} not found in self.datasets. Attempting to run setup for this split.")
+            self.setup(stage='fit' if split_name in ['train', 'dev'] else split_name) # Heuristic for stage
+            if split_name not in self.datasets:
+                 raise RuntimeError(f"Dataset for {split_name} could not be set up. Cannot create DataLoader.")
+
+        shuffle = (split_name == 'train')
+        collate_fn_for_loader = self.datasets[split_name].get_collate_fn()
+
+        return DataLoader(
+            self.datasets[split_name],
+            batch_size=self.cfg.batch_size,
+            shuffle=shuffle,
+            num_workers=self.cfg.num_dataloader_workers,
+            pin_memory=True,
+            collate_fn=collate_fn_for_loader
+        )
+
+    def train_dataloader(self) -> DataLoader:
+        if 'train' not in self.dataloaders_cache:
+            self.dataloaders_cache['train'] = self._create_dataloader('train')
+        return self.dataloaders_cache['train']
+
+    def val_dataloader(self) -> DataLoader:
+        if 'dev' not in self.dataloaders_cache:
+            # MELD uses 'dev' for validation
+            self.dataloaders_cache['dev'] = self._create_dataloader('dev') 
+        return self.dataloaders_cache['dev']
+
+    def test_dataloader(self) -> DataLoader:
+        if 'test' not in self.dataloaders_cache:
+            self.dataloaders_cache['test'] = self._create_dataloader('test')
+        return self.dataloaders_cache['test']
     
+    # Keep get_dataloaders for compatibility if any old code paths use it,
+    # but ideally, they should transition to PL Trainer and its dataloader hooks.
     def get_dataloaders(self):
         """
         Create and return DataLoaders for each split.
-        
-        Returns:
-            dict: Dictionary with DataLoaders for each split
+        Ensures setup is called for all splits if not already done.
+        This is more for external use if not using PL Trainer's fit/validate/test.
         """
+        if not all(split in self.datasets for split in self.splits):
+            self.setup(stage=None) # Ensure all datasets are loaded
+        
+        # Build dataloaders based on currently setup self.datasets
+        # This part might be redundant if PL hooks are always used.
+        # Consider if this method is still strictly necessary.
+        # For now, it mirrors previous behavior but uses _create_dataloader.
+        created_loaders = {}
         for split in self.splits:
-            if split not in self.datasets:
-                print(f"Warning: Dataset for {split} split not setup. Cannot create DataLoader.")
-                continue
-
-            shuffle = (split == 'train')
-            # Use the custom collate_fn from MELDDataset
-            collate_fn_for_loader = self.datasets[split].get_collate_fn()
-
-            self.dataloaders[split] = DataLoader(
-                self.datasets[split],
-                batch_size=self.cfg.batch_size,
-                shuffle=shuffle,
-                num_workers=self.cfg.num_dataloader_workers,
-                pin_memory=True,
-                collate_fn=collate_fn_for_loader
-            )
-            print(f"Created DataLoader for {split} split.")
-            
-        return self.dataloaders
+            if split in self.datasets:
+                # Use cached versions if available from PL calls, or create new
+                if split in self.dataloaders_cache:
+                    created_loaders[split] = self.dataloaders_cache[split]
+                else:
+                    created_loaders[split] = self._create_dataloader(split)
+                    self.dataloaders_cache[split] = created_loaders[split] # Cache it
+            else:
+                print(f"Warning: Dataset for {split} split not setup. Cannot create DataLoader via get_dataloaders().")
+        return created_loaders
     
     def get_class_distribution(self):
         """

@@ -11,8 +11,9 @@ import argparse
 import torch
 import time # Keep time import if used elsewhere, e.g. benchmarking
 from pathlib import Path
-import pandas as pd
+import fireducks.pandas as pd
 import pytorch_lightning as pl
+from pytorch_lightning.loggers import TensorBoardLogger
 
 from configs.base_config import BaseConfig
 from common.utils import set_seed, ensure_dir
@@ -116,85 +117,185 @@ def _run_eda(cfg: BaseConfig, args: argparse.Namespace):
         print(f"Error during processed_features_eda_main: {e}")
 
 def _run_training(cfg: BaseConfig, args: argparse.Namespace, model_class, trainer_class):
-    print(f"Training model: {args.architecture}")
-    data_module = MELDDataModule(cfg)
-    data_module.prepare_data()
-    _ = data_module.setup() # datasets not directly used here, dataloaders are
-    dataloaders = data_module.get_dataloaders()
+    print(f"Training model: {args.architecture} using PyTorch Lightning.")
     
-    ckpt_dir = cfg.paths.ckpt_root / cfg.architecture_name
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    resume_ckpt = ckpt_dir / 'last.ckpt'
-    resume_ckpt = str(resume_ckpt) if resume_ckpt.exists() else None
+    # 1. Instantiate DataModule
+    data_module = MELDDataModule(cfg)
+    # prepare_data and setup are called by PL Trainer if needed, 
+    # but explicit call here ensures data is ready, good for debugging.
+    # data_module.prepare_data() # Called by PL if implemented in DM
+    # data_module.setup(stage='fit') # Called by PL if implemented in DM
 
+    # 2. Instantiate Model (LightningModule)
+    # model_class is MultimodalFusionMLP here
+    model = model_class(cfg=cfg) 
+
+    # 3. Instantiate PyTorch Lightning Trainer
+    ckpt_dir = cfg.model_save_dir
+    # ckpt_dir.mkdir(parents=True, exist_ok=True) # get_checkpoint_cb or PL Trainer might handle this. BaseConfig already does.
+    
     checkpoint_cb = get_checkpoint_cb(str(ckpt_dir))
+    
+    # Setup other callbacks like EarlyStopping if desired
+    # from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+    # early_stop_callback = EarlyStopping(monitor="val_wf1", mode="max", patience=cfg.early_stopping_patience)
 
-    trainer = trainer_class(cfg=cfg, model_class=model_class)
-    trainer.train(
-        train_dataloader=dataloaders['train'],
-        val_dataloader=dataloaders['dev']
-    )
+    trainer_args = {
+        'accelerator': cfg.device.type, # 'cpu', 'gpu', 'mps'
+        'devices': 1, # Assuming single device
+        'max_epochs': cfg.num_epochs,
+        'callbacks': [checkpoint_cb], # Add early_stop_callback if used
+        'deterministic': True, # For reproducibility, pairs well with set_seed
+        'log_every_n_steps': 50, # How often to log within an epoch
+    }
+    
+    # Configure logger
+    logger = TensorBoardLogger(save_dir="logs/", name=cfg.experiment_name, version="")
+    trainer_args['logger'] = logger
+
+    if cfg.mixed_precision_training and cfg.device.type == 'cuda':
+        trainer_args['precision'] = 16 # Or "bf16"
+
+    pl_trainer = pl.Trainer(**trainer_args)
+
+    # 4. Start Training
+    print("Starting PyTorch Lightning training...")
+    pl_trainer.fit(model, datamodule=data_module)
     print("Training complete.")
     
-    eval_split_after_train = getattr(cfg, 'eval_split', 'test')
-    print(f"Evaluating on {eval_split_after_train} set after training...")
-    metrics = trainer.evaluate(
-        dataloader=dataloaders[eval_split_after_train],
-    )
-    print(f"Metrics on {eval_split_after_train} set: {metrics}")
+    # 5. Evaluate on the test set using the best checkpoint
+    eval_split_after_train = getattr(cfg, 'eval_split_after_train', 'test') # Default to 'test'
+    print(f"Evaluating on {eval_split_after_train} set after training using best checkpoint...")
+    # datamodule.setup(stage='test') # Ensure test data is set up if not already
+    # The datamodule passed to .test() should provide the correct dataloaders.
+    test_results = pl_trainer.test(model, datamodule=data_module, ckpt_path='best')
     
-def _run_evaluation(cfg: BaseConfig, args: argparse.Namespace, model_class, trainer_class):
-    print(f"Evaluating model from: {args.evaluate_model}")
+    print(f"Metrics on {eval_split_after_train} set (from best checkpoint):")
+    if test_results:
+        for key, value in test_results[0].items(): # test_results is a list of dicts
+            print(f"  {key}: {value:.4f}")
+
+    # --- Old custom trainer logic (to be removed for mlp_fusion) ---
+    # if trainer_class.__name__ == "MLPFusionTrainer" and args.architecture != "mlp_fusion_legacy":
+    #     print("MLPFusionTrainer is being phased out for mlp_fusion. Using pl.Trainer.")
+    #     # The above PL logic handles it.
+    # elif trainer_class: # For other architectures if they still use custom trainers
+    #     print(f"Using custom trainer: {trainer_class.__name__}")
+    #     # Retain logic for other custom trainers if they exist and are not PL based.
+    #     # This part needs to be architected carefully if mixing PL and custom.
+    #     # For now, assuming all Path A refactors will use PL.
+    #     dataloaders = data_module.get_dataloaders() # Custom trainers might need this
+    #     custom_trainer_instance = trainer_class(cfg=cfg) # Or (cfg, model_class)
+    #     custom_trainer_instance.train(
+    #         train_dataloader=dataloaders['train'],
+    #         val_dataloader=dataloaders['dev']
+    #     )
+    #     print("Custom training complete.")
+    #     # ... custom evaluation ...
+    # else:
+    #     print(f"No specific trainer logic implemented for {args.architecture} in this PL path, or trainer_class is None.")
+
+def _run_evaluation(cfg: BaseConfig, args: argparse.Namespace, model_class, trainer_class): # trainer_class unused for PL
+    print(f"Evaluating model: {args.architecture} from checkpoint: {args.evaluate_model}")
     model_checkpoint_path = Path(args.evaluate_model)
     if not model_checkpoint_path.exists():
         print(f"Error: Model checkpoint {model_checkpoint_path} not found.")
         return
     
+    # 1. Load model from checkpoint
+    # model_class is MultimodalFusionMLP (LightningModule)
+    try:
+        model = model_class.load_from_checkpoint(
+            checkpoint_path=str(model_checkpoint_path),
+            cfg=cfg # Pass cfg if model's __init__ needs it and it wasn't saved in hparams
+                    # or if you need to override some hparams.
+                    # If save_hyperparameters(cfg_dict) was used, PL can often infer.
+        )
+        model.cfg = cfg # Ensure cfg is set on the loaded model, as load_from_checkpoint might not restore it if not in hparams
+        print(f"Model loaded successfully from {model_checkpoint_path}")
+    except Exception as e:
+        print(f"Error loading model from checkpoint {model_checkpoint_path}: {e}")
+        # Fallback: try loading with cfg if direct load fails (less common for PL modules)
+        # try:
+        #     print("Attempting to load model by first instantiating with cfg and then loading state_dict...")
+        #     model = model_class(cfg=cfg)
+        #     checkpoint = torch.load(model_checkpoint_path, map_location=cfg.device)
+        #     # Adjust key if necessary (e.g., remove "model." prefix if checkpoint is from DataParallel/DDP)
+        #     state_dict = checkpoint.get('state_dict', checkpoint) 
+        #     model.load_state_dict(state_dict)
+        #     print(f"Model state loaded successfully using fallback for {model_checkpoint_path}")
+        # except Exception as e_fallback:
+        #     print(f"Fallback model loading also failed: {e_fallback}")
+        #     return
+        return
+
+    model.to(cfg.device) # Ensure model is on the correct device
+    model.eval()         # Set to evaluation mode
+
+    # 2. Instantiate DataModule
     data_module = MELDDataModule(cfg)
-    data_module.prepare_data()
-    _ = data_module.setup()
-    dataloaders = data_module.get_dataloaders()
-    
-    trainer = trainer_class(cfg=cfg, model_class=model_class) 
-    trainer.load_model(str(model_checkpoint_path))
-    
-    eval_split = getattr(cfg, 'eval_split', 'test')
+    # data_module.prepare_data() # Potentially called by PL
+    # data_module.setup(stage='test') # Potentially called by PL
+
+    # 3. Instantiate PyTorch Lightning Trainer for evaluation
+    trainer_args = {
+        'accelerator': cfg.device.type,
+        'devices': 1,
+        'logger': False # No need to log to default logger during .test() typically
+    }
+    pl_trainer = pl.Trainer(**trainer_args)
+
+    # 4. Run evaluation
+    eval_split = getattr(cfg, 'eval_split', 'test') # What split to evaluate on
     print(f"Evaluating on {eval_split} split...")
-    metrics = trainer.evaluate(
-        dataloader=dataloaders[eval_split]
-    )
-    print(f"Evaluation metrics for {eval_split} split: {metrics}")
+    # The datamodule needs to provide the correct dataloader for the specified split
+    # when pl_trainer.test is called. MELDDataModule.test_dataloader() should be used.
+    # If eval_split is 'dev', then MELDDataModule.val_dataloader()
+    
+    results = None
+    if eval_split == 'test':
+        results = pl_trainer.test(model, datamodule=data_module)
+    elif eval_split == 'dev':
+        results = pl_trainer.validate(model, datamodule=data_module) # Use .validate for dev split
+    else:
+        print(f"Warning: Evaluation split '{eval_split}' not directly supported by pl.Trainer's test/validate. Defaulting to test.")
+        results = pl_trainer.test(model, datamodule=data_module)
+
+    if results:
+        print(f"Evaluation metrics for {eval_split} split:")
+        for key, value in results[0].items(): # results is a list of dicts
+             print(f"  {key}: {value:.4f}")
+    else:
+        print(f"No results returned from evaluation on {eval_split} split.")
+
+    # --- Old custom evaluation logic ---
+    # trainer = trainer_class(cfg=cfg, model_class=model_class) 
+    # trainer.load_model(str(model_checkpoint_path))
+    # metrics = trainer.evaluate(dataloader=dataloaders[eval_split])
+    # print(f"Evaluation metrics for {eval_split} split: {metrics}")
     
 def _run_inference(cfg: BaseConfig, args: argparse.Namespace, model_class):
-    print(f"Running inference with model: {args.inference}")
+    print(f"Running inference with model: {args.architecture} from checkpoint: {args.inference}")
     model_checkpoint_path = Path(args.inference)
     if not model_checkpoint_path.exists():
         print(f"Error: Model checkpoint {model_checkpoint_path} not found.")
         return
 
-    # Make sure text_encoder_model_name is available on cfg, needed for AutoTokenizer
     if not hasattr(cfg, 'text_encoder_model_name') or not cfg.text_encoder_model_name:
-        print(f"Critical Error: cfg.text_encoder_model_name is not set. Cannot initialize tokenizer for inference.")
-        print("Please ensure 'text_encoder_model_name' is defined in your config (e.g., YAML or arch-specific config class).")
+        print(f"Critical Error: cfg.text_encoder_model_name is not set. Cannot initialize tokenizer.")
         return
 
-    from transformers import AutoTokenizer, WhisperProcessor, WhisperForConditionalGeneration
-
-    model_instance = model_class(cfg=cfg)
+    # Load LightningModule
     try:
-        checkpoint = torch.load(model_checkpoint_path, map_location=cfg.device)
-        if 'state_dict' in checkpoint:
-            state_dict = {k.replace("model.", ""): v for k, v in checkpoint['state_dict'].items()}
-            model_instance.load_state_dict(state_dict)
-            print(f"Model state loaded successfully from PL-style checkpoint: {model_checkpoint_path}")
-        elif 'model_state_dict' in checkpoint:
-            model_instance.load_state_dict(checkpoint['model_state_dict'])
-            print(f"Model state loaded successfully from 'model_state_dict' key: {model_checkpoint_path}")
-        else:
-            model_instance.load_state_dict(checkpoint)
-            print(f"Model state loaded successfully (assumed raw state_dict): {model_checkpoint_path}")
+        # model_class is MultimodalFusionMLP (LightningModule)
+        model_instance = model_class.load_from_checkpoint(
+            checkpoint_path=str(model_checkpoint_path),
+            cfg=cfg # Pass cfg if model's __init__ needs it and it wasn't saved in hparams
+        )
+        model_instance.cfg = cfg # Ensure cfg is set
+        print(f"Model loaded successfully from {model_checkpoint_path}")
     except Exception as e:
-        print(f"Error loading model state_dict from {model_checkpoint_path}: {e}")
+        print(f"Error loading model from checkpoint {model_checkpoint_path}: {e}")
         return
     
     model_instance.to(cfg.device)
@@ -331,6 +432,7 @@ def parse_args():
     override_group.add_argument("--num_epochs", type=int, default=None, help="Number of epochs. Overrides YAML.")
     override_group.add_argument("--batch_size", type=int, default=None, help="Batch size. Overrides YAML.")
     override_group.add_argument("--learning_rate", type=float, default=None, help="Learning rate. Overrides YAML.")
+    override_group.add_argument("--num_dataloader_workers", type=int, default=None, help="Number of dataloader workers. Overrides YAML/BaseConfig default.")
 
     # --- Data Preparation Control (CLI for debug/quick tests) ---
     dataprep_group = parser.add_argument_group('Data Preparation Debug Overrides')
@@ -412,7 +514,7 @@ def main():
 
     set_seed(cfg.random_seed)
 
-    model_class, _, trainer_class = get_model_architecture(args.architecture)
+    model_class, trainer_class = get_model_architecture(args.architecture)
     if not model_class:
         print(f"ERROR: Model class not found for architecture: {args.architecture}. Exiting.")
         return
@@ -423,15 +525,26 @@ def main():
     elif args.run_eda:
         _run_eda(cfg, args)
     elif args.train_model:
-        if not trainer_class:
-            print(f"ERROR: Trainer class not found for architecture: {args.architecture}. Cannot train.")
+        # If trainer_class is None, it implies a direct PyTorch Lightning setup.
+        if trainer_class is None:
+            print(f"Info: For {args.architecture}, PyTorch Lightning Trainer will be used directly as trainer_class is None.")
+            _run_training(cfg, args, model_class, trainer_class) # trainer_class will be None
+        elif model_class: # If there's a model_class and a trainer_class, proceed (legacy or specific custom trainer)
+             _run_training(cfg, args, model_class, trainer_class)
+        else:
+            # This case should ideally not be hit if get_model_architecture behaves correctly
+            print(f"ERROR: Cannot proceed with training. Model class not found for {args.architecture}, or trainer setup is inconsistent.")
             return
-        _run_training(cfg, args, model_class, trainer_class)
     elif args.evaluate_model:
-        if not trainer_class:
-            print(f"ERROR: Trainer class not found for architecture: {args.architecture}. Cannot evaluate.")
+        # Similar logic for evaluation: if trainer_class is None, assume direct PL evaluation.
+        if trainer_class is None:
+            print(f"Info: For {args.architecture} evaluation, PyTorch Lightning Trainer will be used directly.")
+            _run_evaluation(cfg, args, model_class, trainer_class) # trainer_class will be None
+        elif model_class:
+            _run_evaluation(cfg, args, model_class, trainer_class)
+        else:
+            print(f"ERROR: Cannot proceed with evaluation. Model class not found for {args.architecture}, or trainer setup is inconsistent.")
             return
-        _run_evaluation(cfg, args, model_class, trainer_class)
     elif args.inference:
         _run_inference(cfg, args, model_class)
     # elif args.benchmark: # Re-enable if benchmark mode is implemented

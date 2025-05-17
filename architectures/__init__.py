@@ -3,7 +3,7 @@ Model architectures for emotion classification.
 """
 
 # Import models from subpackages
-from .mlp_fusion import MultimodalFusionMLP, MLPFusionTrainer
+from .mlp_fusion import MultimodalFusionMLP
 from .mlp_fusion.model import MLPFusionConfig
 from .teacher import TeacherFusionModel
 from .teacher.model import TeacherConfig, TeacherFusionModel as TeacherModel
@@ -16,17 +16,17 @@ MODEL_REGISTRY = {
     "mlp_fusion": {
         "model": MultimodalFusionMLP,
         "config": MLPFusionConfig,
-        "trainer": MLPFusionTrainer
+        "trainer": None
     },
     "teacher_transformer": {
         "model": TeacherModel,
         "config": TeacherConfig,
-        # "trainer": TeacherTrainer  # Uncomment when implemented
+        "trainer": None
     },
     "student_distilled_gru": {
         "model": StudentDistilledModel,
         "config": StudentConfig,
-        # "trainer": StudentTrainer  # Uncomment when implemented
+        "trainer": None
     }
 }
 
@@ -36,23 +36,22 @@ def get_available_architectures() -> list:
 
 def get_model_architecture(architecture_name):
     """
-    Get model class by architecture name.
+    Get model class and trainer class by architecture name.
     
     Args:
         architecture_name (str): Name of the architecture
         
     Returns:
-        tuple: (model_class, config_class, trainer_class)
+        tuple: (model_class, trainer_class)
     """
     if architecture_name not in MODEL_REGISTRY:
         raise ValueError(f"Unknown architecture: {architecture_name}")
         
     arch_config = MODEL_REGISTRY[architecture_name]
     model_class = arch_config["model"]
-    config_class = arch_config["config"]
     trainer_class = arch_config.get("trainer", None)
     
-    return model_class, config_class, trainer_class 
+    return model_class, trainer_class 
 
 def get_default_config_class_for_arch(architecture_name):
     """

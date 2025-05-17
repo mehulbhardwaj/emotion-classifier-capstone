@@ -61,8 +61,18 @@ def create_dataset_from_csv(split, config: BaseConfig, limit_dialogues=None):
     total_rows_for_split = len(df)
 
     for idx, row in tqdm(df.iterrows(), total=total_rows_for_split, desc=f"Creating dataset for {split}"):
-        dia_id = row['Dialogue_ID']
-        utt_id = row['Utterance_ID']
+        try:
+            dia_id = int(row['Dialogue_ID'])
+            utt_id = int(row['Utterance_ID'])
+        except ValueError:
+            # print(f"Warning: Skipping row {idx} due to invalid Dialogue_ID or Utterance_ID: {row['Dialogue_ID']}, {row['Utterance_ID']}")
+            missing_audio_count += 1 # Count these as effectively missing audio for consistency in reporting
+            if missing_audio_count <= 5:
+                 print(f"Warning: Skipping row {idx} in {split} CSV due to invalid/missing Dialogue_ID ('{row['Dialogue_ID']}') or Utterance_ID ('{row['Utterance_ID']}').")
+            elif missing_audio_count == 6:
+                 print(f"Further warnings for rows with invalid/missing IDs in {split} CSV will be suppressed.")
+            continue
+
         # Path where WAV file *should* be, using cfg.processed_audio_output_dir
         audio_path = config.processed_audio_output_dir / split / f"dia{dia_id}_utt{utt_id}.wav"
         
@@ -209,7 +219,7 @@ def process_dataset_item(item, text_tokenizer, config: BaseConfig, whisper_proce
             text_for_tokenization, 
             padding='max_length', 
             truncation=True, 
-            max_length=config.max_seq_length_text,
+            max_length=config.text_max_length_for_hf_dataset,
             return_tensors="pt"
         )
         output_item['input_ids'] = tokenized_text['input_ids'].squeeze(0).to(current_device) 
