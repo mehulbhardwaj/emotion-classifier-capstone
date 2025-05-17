@@ -1,1 +1,21 @@
- 
+graph TD
+    subgraph "Input Data"
+        TestCSV["Test CSV from meld_data/raw/"]
+        WAVs["Pre-extracted WAVs from meld_data/processed/audio/"]
+    end
+
+    subgraph "Inference Engine (MLP Fusion)"
+        TestCSV -->|Text| Tokenizer["Text Tokenizer"]
+        Tokenizer --> TextIDs["Token IDs"]
+        WAVs -->|Audio Path| MelLoader["Load WAV & extract Mel Spectrogram"]
+        MelLoader --> MelTensor["Mel Spectrogram Tensor"]
+
+        TextIDs --> TextEncoder["Pre-trained Text Encoder (Frozen)"]
+        MelTensor --> AudioEncoder["Pre-trained Audio Encoder (Frozen)"]
+        TextEncoder --> EmbText["Text Embeddings"]
+        AudioEncoder --> EmbAudio["Audio Embeddings"]
+        EmbText --> Concat["Concatenate Embeddings"]
+        EmbAudio --> Concat
+        Concat --> MLPHead["Trained MLP Head"]
+        MLPHead --> Prediction["Predicted Emotion & Confidence"]
+    end 

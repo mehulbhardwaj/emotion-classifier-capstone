@@ -1,1 +1,25 @@
- 
+graph TD
+    User["User executes:<br/>python main.py<br/>--architecture &lt;arch&gt;<br/>--prepare_data"] --> MainPy["main.py"]
+
+    MainPy -->|Loads| Config["Active YAML Config<br/>(e.g., mlp_fusion_default.yaml)"]
+
+    subgraph "Data Preparation Steps (controlled by main.py & config flags)"
+        direction LR
+        Download{"1. Download MELD<br/>(if needed)"}
+        MP4toWAV{"2. MP4 to WAV Conversion"}
+        BuildHF{"3. Build Hugging Face Datasets"}
+
+        MainPy -->|Triggers based on config| Download
+        Download -->|Creates/Uses| RawData["meld_data/raw/<br/>(CSVs, MP4s)"]
+
+        MainPy -->|Triggers `run_mp4_to_wav_conversion`| MP4toWAV
+        MP4toWAV -->|Uses| RawData
+        MP4toWAV -->|Creates| ProcessedWAVs["meld_data/processed/audio/"]
+
+        MainPy -->|Triggers `run_hf_dataset_creation`| BuildHF
+        BuildHF -->|Uses| RawData
+        BuildHF -->|Uses| ProcessedWAVs
+        BuildHF -->|Creates| HFDatasets["meld_data/processed/features/hf_datasets/"]
+    end
+
+    HFDatasets -->|Ready for| UsedBy["MELDDataModule in Training/Eval"] 

@@ -1,1 +1,30 @@
- 
+graph TD
+    User["User executes:<br>python main.py --inference \\<br>  --architecture &lt;arch&gt; \\<br>  --model_path &lt;model_ckpt&gt; \\<br>  --infer_csv &lt;csv_path&gt; \\<br>  --infer_audio_dir &lt;wav_dir&gt;"] --> MainPy_Inference["main.py orchestrates via EmotionInferenceEngine"]
+
+    subgraph "Input Data (specified via CLI arguments)"
+        InferCsv["--infer_csv points to CSV<br>e.g., test_sent_emo.csv"]
+        InferAudioDir["--infer_audio_dir points to WAVs folder<br>e.g., meld_data/processed/audio/test/"]
+    end
+    
+    MainPy_Inference --> InferenceEngine["EmotionInferenceEngine (common/inference.py)"]
+    ModelPath_Input["--model_path points to Checkpoint<br>e.g., models/mlp_fusion/best_model.pt"] --> InferenceEngine
+
+    subgraph "Inference Steps within Engine (Example: MLP Fusion Model)"
+        InferCsv -->|Text column| Tokenizer["Text Tokenizer (from config)"]
+        Tokenizer --> TextIDs["Token IDs"]
+        
+        InferAudioDir -->|Audio file paths from CSV| AudioLoaderNode["Load WAV & Extract Features<br>(e.g., Mel Spectrogram as per config)"]
+        AudioLoaderNode --> AudioTensor["Audio Feature Tensor"]
+        
+        TextIDs --> TextEncoder["Pre-trained Text Encoder (part of loaded model)"]
+        AudioTensor --> AudioEncoder["Pre-trained Audio Encoder (part of loaded model)"]
+        
+        TextEncoder --> EmbText["Text Embeddings"]
+        AudioEncoder --> EmbAudio["Audio Embeddings"]
+        
+        EmbText --> Fusion["Fusion Layer (e.g., Concatenate)"]
+        EmbAudio --> Fusion
+        Fusion --> ClassifierHead["Classifier Head (part of loaded model)"]
+        ClassifierHead --> Prediction["Predicted Emotion & Confidence"]
+    end
+    Prediction --> Output["Output Predictions (printed or saved)"] 

@@ -1,1 +1,32 @@
- 
+sequenceDiagram
+    actor User
+    participant MainPy as "main.py"
+    participant Config as "ActiveConfig (YAML+Base)"
+    participant InferenceEngine as "EmotionInferenceEngine"
+    participant ArchModel as "ModelArchitecture"
+
+    User->>MainPy: Executes `python main.py --inference --architecture <arch> ...`
+    MainPy->>Config: Load configuration
+    Config-->>MainPy: cfg object
+
+    MainPy->>InferenceEngine: Instantiate(cfg, model_checkpoint, ModelClass)
+    activate InferenceEngine
+    InferenceEngine->>ArchModel: Instantiate ModelArchitecture(cfg)
+    ArchModel-->>InferenceEngine: model_instance
+    InferenceEngine->>ArchModel: load_state_dict(checkpoint)
+    InferenceEngine->>Config: Get tokenizer and ASR settings
+    deactivate InferenceEngine
+    InferenceEngine-->>MainPy: engine_instance
+
+    MainPy->>InferenceEngine: predict_from_csv(infer_csv, infer_audio_dir)
+    activate InferenceEngine
+    loop For each row
+        InferenceEngine->>InferenceEngine: Tokenize text
+        InferenceEngine->>InferenceEngine: Load WAV & extract features
+        InferenceEngine->>ArchModel: forward({audio, text_ids})
+        ArchModel-->>InferenceEngine: logits
+        InferenceEngine->>InferenceEngine: Convert logits to label
+    end
+    deactivate InferenceEngine
+    InferenceEngine-->>MainPy: predictions
+    MainPy->>User: Display/save predictions 

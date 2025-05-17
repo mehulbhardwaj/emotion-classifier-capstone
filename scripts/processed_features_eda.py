@@ -364,7 +364,7 @@ def main(cfg_param: BaseConfig = None):
         # BaseConfig now has these defaults, so direct instantiation is fine.
         current_cfg = BaseConfig(dataset_name="meld") # Removed **default_audio_params
     
-    markdown_report_file_path = PROJECT_ROOT / "processed_eda_report.md"
+    markdown_report_file_path = PROJECT_ROOT / "meld_data_eda.md"
     perform_meld_eda(config=current_cfg, markdown_report_path=markdown_report_file_path)
 
 if __name__ == '__main__':

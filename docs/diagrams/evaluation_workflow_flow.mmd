@@ -1,1 +1,18 @@
- 
+graph TD
+    User["User executes:<br>python main.py --evaluate_model \\<br>  --architecture &lt;arch&gt; \\<br>  --model_path &lt;path_to_checkpoint&gt;"] --> MainPy["main.py"]
+    MainPy -- Loads --> Config["Selected Config (e.g., mlp_fusion_default.yaml)"]
+    MainPy -- Instantiates --> DataModule["MELDDataModule (common/data_loader.py)"]
+    DataModule -- Loads --> HFDatasets["HF Datasets from meld_data/processed/features/hf_datasets/"]
+    DataModule -- Creates --> DataLoaders["Specified Split DataLoaders (e.g., Test)"]
+
+    MainPy -- Instantiates --> ModelArchNode["Selected Model Architecture"]
+    ModelArchNode -- "Uses Config" --> Config
+    ModelCheckpoint_Input["User-specified Model Checkpoint"] --> ModelArch_Loads_Weights["ModelArch loads weights"]
+    ModelArch_Loads_Weights --> ModelArchNode
+    
+    MainPy -- Instantiates --> TrainerNode["Selected Trainer"]
+    TrainerNode -- Uses --> ModelArchNode
+    TrainerNode -- Receives --> DataLoaders
+    TrainerNode -- Executes --> EvaluationLoop["Evaluation Loop"]
+    EvaluationLoop -- Returns --> Metrics["Evaluation Metrics"]
+    Metrics -- "Displayed/Logged by" --> MainPy 

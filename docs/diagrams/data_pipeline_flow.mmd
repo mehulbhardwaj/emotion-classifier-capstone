@@ -1,1 +1,15 @@
- 
+graph TD
+    subgraph "Step 1: Utterance MP4 → WAV<br/>(scripts/extract_meld_wavs_from_mp4s.py, part of prepare_data)"
+        UtteranceMP4s["MELD Utterance MP4s from download_meld_dataset.py<br/>in meld_data/raw/&lt;split&gt;_videos/"] --> FFMPEGPreproc["ffprobe validation + ffmpeg conversion"]
+        FFMPEGPreproc --> UtteranceWAVs["Utterance WAVs<br/>in meld_data/processed/audio/"]
+    end
+
+    subgraph "Step 2: HF Dataset Creation<br/>(scripts/build_hf_dataset.py, part of prepare_data)"
+        UtteranceWAVs --> MelSpec["Log-Mel Spectrogram Extraction"]
+        CSVs["MELD CSVs in meld_data/raw/:<br/>Utterances, Emotions"] --> Tokenizer["Text Tokenization"]
+        
+        MelSpec --> HFBuilder["HF Dataset Builder"]
+        Tokenizer --> HFBuilder
+        CSVs -->|Emotion Labels| HFBuilder
+        HFBuilder --> SavedHFDataset["Saved HF Dataset<br/>in meld_data/processed/features/"]
+    end 

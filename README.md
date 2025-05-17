@@ -260,48 +260,16 @@ python main.py --architecture mlp_fusion --evaluate_model --model_path models/ml
 The following diagrams illustrate the general data flow for training and inference, using the MLP Fusion model as an example.
 
 **Data Preparation Pipeline:**
-```mermaid
-graph TD
-    subgraph "Step 1: Utterance MP4 to WAV (scripts/extract_meld_wavs_from_mp4s.py, part of main.py --prepare_data)"
-        UtteranceMP4s[MELD Utterance MP4s from download_meld_dataset.py in meld_data/raw/<split>_videos/] --> FFMPEGPreproc[ffprobe validation + ffmpeg conversion]
-        FFMPEGPreproc --> UtteranceWAVs[Utterance WAVs in meld_data/processed/audio/]
-    end
 
-    subgraph "Step 2: HF Dataset Creation (scripts/build_hf_dataset.py, part of main.py --prepare_data)"
-        UtteranceWAVs --> MelSpec[Log-Mel Spectrogram Extraction]
-        CSVs[MELD CSVs in meld_data/raw/: Utterances, Emotions] --> Tokenizer[Text Tokenization]
-        
-        MelSpec --> HFBuilder[HF Dataset Builder]
-        Tokenizer --> HFBuilder
-        CSVs -->|Emotion Labels| HFBuilder
-        HFBuilder --> SavedHFDataset[Saved HF Dataset in meld_data/processed/features/]
-    end
-```
+Details: [Source](docs/diagrams/data_pipeline_flow.mmd) / [Image](docs/diagrams/data_pipeline_flow.png)
 
-**Training Pipeline (Using Ground Truth Text from CSV):**
-```mermaid
-graph TD
-    subgraph "Input Data"
-        TestCSV[Test CSV with Utterances from meld_data/raw/]
-        WAVs[Pre-extracted Utterance WAVs from meld_data/processed/audio/]
-    end
+![Data Preparation Pipeline Flowchart](docs/diagrams/data_pipeline_flow.png)
 
-    subgraph "Inference Engine (main.py with MLP Fusion)"
-        TestCSV --> |Text| Tokenizer[Text Tokenizer]
-        Tokenizer --> TextIDs[Token IDs]
-        WAVs --> |Audio Path| MelLoader[Load WAV & Extract Mel Spectrogram]
-        MelLoader --> MelTensor[Mel Spectrogram Tensor]
+**Training Pipeline (Using Ground Truth Text from CSV) / Inference Data Flow:**
 
-        TextIDs --> TextEncoder[Pre-trained Text Encoder (Frozen)]
-        MelTensor --> AudioEncoder[Pre-trained Audio Encoder (Frozen)]
-        TextEncoder --> EmbText[Text Embeddings]
-        AudioEncoder --> EmbAudio[Audio Embeddings]
-        EmbText --> Concat[Concatenate Embeddings]
-        EmbAudio --> Concat
-        Concat --> MLPHead[Trained MLP Head]
-        MLPHead --> Prediction[Predicted Emotion & Confidence]
-    end
-```
+Details: [Source](docs/diagrams/data_flow_mlp_fusion.mmd) / [Image](docs/diagrams/data_flow_mlp_fusion.png)
+
+![Data Flow MLP Fusion Flowchart](docs/diagrams/data_flow_mlp_fusion.png)
 
 ### Shared Configuration (`common/config.py`)
 
@@ -462,5 +430,149 @@ A shell script `run_meld_pipeline_sagemaker.sh` is provided to automate the enti
     tail -f meld_pipeline.log
     ```This script is designed for environments like AWS SageMaker Studio Lab or other Linux-based systems where you want to run the full data pipeline unattended.
 
+## System Overview and Execution Flow Diagram
 
+This diagram shows the high-level architecture of the project and how users interact with it via `main.py`.
 
+Details: [Source](docs/diagrams/system_overview_flow.mmd) / [Image](docs/diagrams/system_overview_flow.png)
+
+![System Overview Flowchart](docs/diagrams/system_overview_flow.png)
+
+## System Design Diagrams
+
+### 1. Core Class Diagram
+
+This diagram shows the main classes in the system and their primary relationships (inheritance, composition, usage). It helps in understanding the static structure of the codebase.
+
+Details: [Source](docs/diagrams/core_class_diagram.mmd) / [Image](docs/diagrams/core_class_diagram.png)
+
+![Core Class Diagram](docs/diagrams/core_class_diagram.png)
+
+### 2. Training Sequence Diagram
+
+This sequence diagram illustrates the typical interactions between objects when `main.py --train_model` is executed.
+
+Details: [Source](docs/diagrams/training_sequence_diagram.mmd) / [Image](docs/diagrams/training_sequence_diagram.png)
+
+![Training Sequence Diagram](docs/diagrams/training_sequence_diagram.png)
+
+### 3. Inference Sequence Diagram (CSV-based)
+
+This sequence diagram details the interactions for CSV-based inference when `main.py --inference --infer_csv ...` is run.
+
+Details: [Source](docs/diagrams/inference_sequence_diagram_csv.mmd) / [Image](docs/diagrams/inference_sequence_diagram_csv.png)
+
+![Inference Sequence Diagram (CSV-based)](docs/diagrams/inference_sequence_diagram_csv.png)
+
+## Model Details & Design Insights
+
+### Data Flow and Model Architecture (Example: MLP Fusion)
+
+The following diagrams illustrate the general data flow for training and inference, using the MLP Fusion model as an example.
+
+**Data Preparation Pipeline:**
+
+Details: [Source](docs/diagrams/data_pipeline_flow.mmd) / [Image](docs/diagrams/data_pipeline_flow.png)
+
+![Data Preparation Pipeline Flowchart](docs/diagrams/data_pipeline_flow.png)
+
+**Training Pipeline (Using Ground Truth Text from CSV) / Inference Data Flow:**
+
+Details: [Source](docs/diagrams/data_flow_mlp_fusion.mmd) / [Image](docs/diagrams/data_flow_mlp_fusion.png)
+
+![Data Flow MLP Fusion Flowchart](docs/diagrams/data_flow_mlp_fusion.png)
+
+### Shared Configuration (`common/config.py`)
+
+A `BaseConfig` class in `configs/base_config.py` defines shared parameters (data paths, default model names, audio feature defaults, etc.). When `main.py` is run with a specific `--architecture <name>`, it loads the corresponding YAML configuration file (e.g., `configs/<name>_default.yaml`). This YAML file can override any parameter from `BaseConfig` and provide architecture-specific settings. This system allows for flexible and centralized configuration management.
+
+## Generating Diagrams with Mermaid CLI
+
+The diagrams in this README and in the `docs/diagrams/` folder are written in Mermaid syntax. To render these diagrams into SVG or PNG files locally, you can use the official Mermaid CLI.
+
+### Installation
+
+Node.js is required. You can install the Mermaid CLI globally or use `npx`.
+
+**Global Install:**
+```bash
+npm install -g @mermaid-js/mermaid-cli
+```
+
+**Using npx (no global install needed for one-off commands):**
+```bash
+# Example: npx @mermaid-js/mermaid-cli -i docs/diagrams/system_overview_flow.mmd -o docs/diagrams/system_overview_flow.png
+```
+
+### Generating a Single Diagram
+
+To convert an individual `.mmd` file to an SVG or PNG image:
+```bash
+# For SVG
+mmdc -i docs/diagrams/<diagram_name>.mmd -o docs/diagrams/<diagram_name>.svg
+# For PNG
+mmdc -i docs/diagrams/<diagram_name>.mmd -o docs/diagrams/<diagram_name>.png
+```
+For example (PNG):
+```bash
+mmdc -i docs/diagrams/core_class_diagram.mmd -o docs/diagrams/core_class_diagram.png
+```
+
+### Generating All Diagrams Referenced in README.md
+
+To generate or update all PNG diagram images referenced in this README, you can use the `render_diagrams` shell script located in the `docs/diagrams/` directory.
+
+First, ensure the script is executable:
+```bash
+chmod +x docs/diagrams/render_diagrams
+```
+
+Then, from the **project root directory**, run the script:
+```bash
+./docs/diagrams/render_diagrams
+```
+This will process all `.mmd` source files in `docs/diagrams/` and output the corresponding `.png` images into the same `docs/diagrams/` directory. These PNGs will then be displayed in this README.
+
+For reference, the content of `docs/diagrams/render_diagrams` is:
+```bash
+#!/bin/bash
+# Script to render all .mmd files in docs/diagrams to .png
+
+# This script assumes it is being run from the project root directory.
+DIAGRAM_SRC_DIR="docs/diagrams"
+OUTPUT_DIR="docs/diagrams"
+
+if [ ! -d "$DIAGRAM_SRC_DIR" ]; then
+  echo "Source directory $DIAGRAM_SRC_DIR not found."
+  echo "Ensure you are in the project root directory when running ./docs/diagrams/render_diagrams"
+  exit 1
+fi
+
+# Ensure output directory exists
+mkdir -p "$OUTPUT_DIR"
+
+for mmd_file in "$DIAGRAM_SRC_DIR"/*.mmd; do
+  if [ -f "$mmd_file" ]; then
+    base_name=$(basename "$mmd_file" .mmd)
+    # Output PNG file to the OUTPUT_DIR
+    png_file="$OUTPUT_DIR/$base_name.png"
+    echo "Rendering $mmd_file to $png_file..."
+    
+    # Use npx if mmdc is not globally installed, or mmdc directly
+    npx @mermaid-js/mermaid-cli -i "$mmd_file" -o "$png_file"
+    # Example with mmdc if installed globally:
+    # mmdc -i "$mmd_file" -o "$png_file"
+  fi
+done
+
+echo "All diagrams rendered to $OUTPUT_DIR as PNGs."
+```
+
+### Customizing Output
+
+You can adjust the width, height, theme, and background color (note: background color might be more relevant for PNGs than SVGs with transparent backgrounds):
+```bash
+mmdc -i path/to/diagram.mmd -o path/to/diagram.png --width 800 --height 600 --theme default --backgroundColor white
+```
+
+Refer to the [Mermaid CLI documentation](https://github.com/mermaid-js/mermaid-cli) for more options.

@@ -1,1 +1,116 @@
- 
+classDiagram
+    direction LR
+    class BaseConfig {
+        +dataset_name: str
+        +raw_data_dir: Path
+        +processed_audio_output_dir: Path
+        +processed_features_dir: Path
+        +sample_rate: int
+        +get_specific_model_dir() Path
+    }
+
+    class ArchitectureSpecificConfig {
+        <<YAML>>
+        +model_specific_param: Any
+    }
+    ArchitectureSpecificConfig --|> BaseConfig : Inherits/Overrides
+
+    class MELDDataModule {
+        +cfg: BaseConfig
+        +datasets: dict
+        +dataloaders: dict
+        +prepare_data()
+        +setup()
+        +get_dataloaders() dict
+        +get_class_distribution() dict
+    }
+    MELDDataModule o-- BaseConfig : uses
+
+    class MELDDataset {
+        +hf_dataset: Dataset
+        +cfg: BaseConfig
+        +__init__(hf_dataset, cfg, split_name)
+        +__len__() int
+        +__getitem__(idx) dict
+        +get_collate_fn() callable
+    }
+    MELDDataModule "1" *-- "0..*" MELDDataset : creates/manages
+    MELDDataset o-- BaseConfig : uses
+
+    class ModelArchitecture {
+        <<Abstract>>
+        +cfg: BaseConfig
+        #model: nn.Module
+        +__init__(cfg)
+        +forward(batch) Tensor
+        +load_pretrained_encoders()
+        +get_trainable_parameters() list
+    }
+    ModelArchitecture o-- BaseConfig : uses
+
+    class MLPFusionModel {
+        +MLP_Fusion_Model(cfg)
+    }
+    MLPFusionModel --|> ModelArchitecture
+
+    class TeacherModel {
+        +Teacher_Model(cfg)
+    }
+    TeacherModel --|> ModelArchitecture
+
+    class StudentModel {
+        +Student_Model(cfg)
+    }
+    StudentModel --|> ModelArchitecture
+
+
+    class Trainer {
+        <<Abstract>>
+        +cfg: BaseConfig
+        +model: ModelArchitecture
+        +optimizer: Optimizer
+        +scheduler: LRScheduler
+        +__init__(cfg, model_class)
+        +train(train_dataloader, val_dataloader)
+        +evaluate(dataloader) dict
+        +load_model(checkpoint_path)
+        +save_model(epoch, metrics)
+    }
+    Trainer o-- BaseConfig : uses
+    Trainer o-- ModelArchitecture : uses
+
+    class MLPFusionTrainer {
+        +MLP_Fusion_Trainer(cfg, model_class)
+    }
+    MLPFusionTrainer --|> Trainer
+
+    class EmotionInferenceEngine {
+        +cfg: BaseConfig
+        +model: ModelArchitecture
+        +text_tokenizer: AutoTokenizer
+        +asr_processor: WhisperProcessor
+        +asr_model: WhisperForConditionalGeneration
+        +__init__(cfg, model_checkpoint_path, model_class)
+        +predict_from_csv(csv_path, audio_dir) list
+        +predict_single_audio(audio_file_path, text) str
+        +predict_mic_input() str
+    }
+    EmotionInferenceEngine o-- BaseConfig : uses
+    EmotionInferenceEngine o-- ModelArchitecture : uses
+
+    class MainPy {
+        <<CLI Orchestrator>>
+        +parse_args()
+        +main()
+        +_run_data_preparation(cfg, args)
+        +_run_eda(cfg, args)
+        +_run_training(cfg, args, model_class, trainer_class)
+        +_run_evaluation(cfg, args, model_class, trainer_class)
+        +_run_inference(cfg, args, model_class)
+    }
+    MainPy o-- BaseConfig : uses
+    MainPy o-- MELDDataModule : uses
+    MainPy o-- ModelArchitecture : uses
+    MainPy o-- Trainer : uses
+    MainPy o-- EmotionInferenceEngine : uses
+    MainPy ..> ArchitectureSpecificConfig : loads 

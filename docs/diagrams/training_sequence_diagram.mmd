@@ -1,1 +1,43 @@
- 
+sequenceDiagram
+    actor User
+    participant MainPy as "main.py"
+    participant Config as "ActiveConfig (YAML+Base)"
+    participant DataModule as "MELDDataModule"
+    participant ArchModel as "ModelArchitecture"
+    participant Trainer as "ModelTrainer"
+
+    User->>MainPy: Executes `python main.py --train_model --architecture <arch> ...`
+    MainPy->>Config: Load configuration (`<arch>_default.yaml`)
+    Config-->>MainPy: cfg object
+    MainPy->>DataModule: Instantiate(cfg)
+    MainPy->>DataModule: prepare_data()
+    DataModule-->>MainPy: (Data presence checked)
+    MainPy->>DataModule: setup()
+    DataModule-->>MainPy: HF Datasets loaded
+    MainPy->>DataModule: get_dataloaders()
+    DataModule-->>MainPy: train_loader, dev_loader
+
+    MainPy->>ArchModel: Instantiate ModelArchitecture(cfg)
+    ArchModel-->>MainPy: model_instance
+    MainPy->>Trainer: Instantiate Trainer(cfg, model_instance)
+    Trainer-->>MainPy: trainer_instance
+
+    MainPy->>Trainer: train(train_loader, dev_loader)
+    activate Trainer
+    loop For each epoch
+        loop For each batch
+            Trainer->>ArchModel: forward(batch)
+            ArchModel-->>Trainer: logits
+            Trainer->>Trainer: calculate_loss
+            Trainer->>Trainer: optimizer.zero_grad()
+            Trainer->>Trainer: loss.backward()
+            Trainer->>Trainer: optimizer.step()
+        end
+        alt Validation
+            Trainer->>Trainer: evaluate(dev_loader)
+            Trainer-->>Trainer: validation_metrics
+        end
+        Trainer->>Trainer: save_model(epoch, metrics)
+    end
+    deactivate Trainer
+    Trainer-->>MainPy: Training complete 

@@ -1,0 +1,20 @@
+graph TD
+    User["User executes:<br>python main.py --train_model \\<br>  --architecture &lt;arch&gt; \\<br>  --epochs &lt;N&gt; ..."] --> MainPy["main.py"]
+    MainPy -- Loads --> Config["Selected Config (e.g., mlp_fusion_default.yaml)"]
+    MainPy -- Instantiates --> DataModule["MELDDataModule (common/data_loader.py)"]
+    DataModule -- Loads --> HFDatasets["HF Datasets from meld_data/processed/features/hf_datasets/"]
+    DataModule -- Creates --> DataLoaders["Train/Dev DataLoaders"]
+
+    MainPy -- Instantiates --> ModelArchNode["Selected Model Architecture<br>(e.g., MLP_Fusion_Model from architectures/)"]
+    ModelArchNode -- "Uses Config" --> Config
+    MainPy -- Instantiates --> TrainerNode["Selected Trainer<br>(e.g., MLP_Fusion_Trainer from architectures/)"]
+    
+    TrainerNode -- Uses --> ModelArchNode
+    TrainerNode -- Receives --> DataLoaders
+    TrainerNode -- Executes --> TrainingLoop["Training Loop (epochs, steps, loss, backprop)"]
+    TrainingLoop -- Uses --> ModelArchNode
+    TrainingLoop -- "Logs Metrics" --> WB["W&B / Logs"]
+    TrainerNode -- Saves --> ModelCheckpoint["Saved Model in models/&lt;arch&gt;/"]
+    TrainerNode -- "Optionally Runs" --> EvaluationLoop["Evaluation Loop (on dev set after training)"]
+    EvaluationLoop -- Returns --> Metrics["Evaluation Metrics"]
+    Metrics -- "Displayed/Logged by" --> MainPy 
