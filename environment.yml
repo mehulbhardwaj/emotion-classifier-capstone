@@ -29,5 +29,6 @@ dependencies:
     - ffmpeg-python>=0.2.0
     - filetype
     - fireducks
+    - tensorboard
     # Consider adding wandb if you plan to use Weights & Biases
     # - wandb

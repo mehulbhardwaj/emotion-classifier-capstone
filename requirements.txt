@@ -8,4 +8,5 @@ librosa
 soundfile
 tqdm
 scikit-learn
-tensorboard 
+tensorboard
+fireducks

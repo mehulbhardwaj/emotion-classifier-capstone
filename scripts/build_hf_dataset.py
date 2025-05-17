@@ -125,24 +125,60 @@ def extract_mel_spectrogram(audio_path_or_waveform, config: BaseConfig, input_sa
     """
     try:
         if isinstance(audio_path_or_waveform, (str, Path)):
-            waveform, sample_rate = torchaudio.load(audio_path_or_waveform)
+            # Directly use librosa for loading audio files
+            try:
+                import librosa
+                # librosa.load resamples to config.sample_rate and converts to mono
+                waveform_lib, sample_rate_lib = librosa.load(str(audio_path_or_waveform), sr=config.sample_rate, mono=True)
+                waveform = torch.from_numpy(waveform_lib) # librosa returns 1D array for mono
+                if waveform.ndim == 1:
+                    waveform = waveform.unsqueeze(0) # Add channel dim: [1, num_samples]
+                sample_rate = sample_rate_lib # This will be config.sample_rate
+                # print(f"Successfully loaded {audio_path_or_waveform} with librosa. Shape: {waveform.shape}")
+            except Exception as e_librosa:
+                print(f"Error loading {audio_path_or_waveform} with librosa: {e_librosa}")
+                return None # Or raise e_librosa if preferred
         elif torch.is_tensor(audio_path_or_waveform):
             waveform = audio_path_or_waveform
             sample_rate = input_sample_rate
             if sample_rate is None:
                 sample_rate = config.sample_rate 
+            
+            # Ensure waveform is 2D [channel, time] for consistency if it's a raw tensor
+            if waveform.ndim == 1:
+                waveform = waveform.unsqueeze(0)
+            
+            # If input tensor has a different sample rate, resample
+            if sample_rate != config.sample_rate:
+                # print(f"Resampling tensor from {sample_rate} to {config.sample_rate}")
+                resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=config.sample_rate)
+                waveform = resampler(waveform)
+            
+            # If input tensor is stereo, convert to mono
+            if waveform.shape[0] > 1:
+                # print(f"Converting stereo tensor to mono.")
+                waveform = torch.mean(waveform, dim=0, keepdim=True)
         else:
             raise TypeError("audio_path_or_waveform must be a path or a tensor.")
 
-        if waveform.ndim == 1:
+        # Ensure waveform is 2D [1, time] at this point
+        if waveform.ndim == 1: # Should not happen if logic above is correct
             waveform = waveform.unsqueeze(0)
         
-        if sample_rate != config.sample_rate:
-            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=config.sample_rate)
-            waveform = resampler(waveform)
+        # The following checks/transforms might be redundant if librosa handles them, but kept for safety with tensor inputs
+        # if sample_rate != config.sample_rate: # Librosa already resamples if path was input
+        #     if not isinstance(audio_path_or_waveform, (str,Path)): # Only resample if it was a tensor input with wrong SR
+        #         resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=config.sample_rate)
+        #         waveform = resampler(waveform)
         
-        if waveform.shape[0] > 1: # If stereo, convert to mono by averaging channels
-            waveform = torch.mean(waveform, dim=0, keepdim=True)
+        # if waveform.shape[0] > 1: # Librosa already converts to mono if path was input
+        #     if not isinstance(audio_path_or_waveform, (str,Path)): # Only convert to mono if it was a stereo tensor input
+        #         waveform = torch.mean(waveform, dim=0, keepdim=True)
+
+        if waveform.shape[-1] < config.n_fft:
+            print(f"Warning: Waveform for {audio_path_or_waveform} is shorter ({waveform.shape[-1]} samples) than n_fft ({config.n_fft}). Padding to n_fft length.")
+            padding_needed = config.n_fft - waveform.shape[-1]
+            waveform = torch.nn.functional.pad(waveform, (0, padding_needed))
 
         mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=config.sample_rate,
