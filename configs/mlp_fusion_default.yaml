@@ -70,4 +70,12 @@ win_length_ms: null # If null, will use win_length (samples) from BaseConfig. If
 # f_max: 8000.0    # Maximum H_z frequency (half of target_sample_rate is common)
 # power: 2.0       # Exponent for the magnitude spectrogram
 # normalize_spectrogram: true
-# mel_scale: "htk" # "htk" or "slaney" 
+# mel_scale: "htk" # "htk" or "slaney"
+
+# Add at the top of the file, after architecture_name
+paths:
+  data_root: ./meld_data
+  processed_root: ./meld_data/processed/features/hf_datasets
+  ckpt_root: ./checkpoints
+  model_save_dir: ./models
+  results_dir: ./results 

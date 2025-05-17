@@ -1,0 +1,3 @@
+paths:
+  data_root: /path/to/data
+  processed_root: null  # Will be set to /path/to/data/meld_cache when using cached datasets 
