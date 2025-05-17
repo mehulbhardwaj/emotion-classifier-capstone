@@ -21,6 +21,9 @@ from common.inference import EmotionInferenceEngine
 from architectures import get_model_architecture, get_default_config_class_for_arch, get_available_architectures
 from src.callbacks.checkpoint import get_checkpoint_cb
 
+# Define CONFIG_DIR at the top level, after imports
+CONFIG_DIR = Path("configs")
+
 # Helper functions from common.cli_handlers (or directly in main.py as before)
 # Assuming they are now in common.cli_handlers as per previous refactoring
 # from common.cli_handlers import (
@@ -358,6 +361,7 @@ def main():
     yaml_path_to_load = args.config_file
     if not yaml_path_to_load and args.architecture:
         # Default to architecture-specific YAML if no general config_file is given
+        # CONFIG_DIR is now defined
         yaml_path_to_load = os.path.join(CONFIG_DIR, f"{args.architecture}_default.yaml")
 
     if yaml_path_to_load and not os.path.exists(yaml_path_to_load):
@@ -382,12 +386,11 @@ def main():
                                             # For now, the error shows MLPFusionConfig is already chosen.
 
     # Get the appropriate configuration class
-    # This assumes get_config_class can handle arch_for_config_class being None
-    # if the YAML is expected to define the architecture.
-    # Based on the error, MLPFusionConfig was already selected, so this part of your code works.
-    config_class = get_config_class(architecture_name=arch_for_config_class, 
-                                    dataset_name=args.dataset_name, 
-                                    input_mode=args.input_mode)
+    # Revert to using the imported get_default_config_class_for_arch
+    config_class = get_default_config_class_for_arch(arch_for_config_class)
+    if not config_class:
+        print(f"Critical: No config class found for architecture '{arch_for_config_class}'. Exiting.")
+        return
     
     cfg = config_class.from_args(args,
                                  architecture_name_cli=args.architecture, # Pass CLI architecture
