@@ -460,7 +460,7 @@ A shell script `run_meld_pipeline_sagemaker.sh` is provided to automate the enti
 3.  Monitor progress:
     ```bash
     tail -f meld_pipeline.log
-    ```
-This script is designed for environments like AWS SageMaker Studio Lab or other Linux-based systems where you want to run the full data pipeline unattended.
+    ```This script is designed for environments like AWS SageMaker Studio Lab or other Linux-based systems where you want to run the full data pipeline unattended.
+
 
 
