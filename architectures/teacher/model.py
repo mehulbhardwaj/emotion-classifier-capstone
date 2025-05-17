@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from transformers import RobertaModel, WavLMModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from typing import Optional
+from typing import Optional, Path
 
 from configs.base_config import BaseConfig
 
@@ -157,15 +157,42 @@ class TeacherFusionModel(nn.Module):
 class TeacherConfig(BaseConfig):
     """Configuration specific to Teacher TODKAT-lite model."""
     
-    def __init__(self, architecture_name_override: Optional[str] = None):
-        super().__init__(architecture_name_override=architecture_name_override)
-        self.architecture_name = "teacher_transformer"
+    def __init__(self,
+                 data_root_override: Optional[Path] = None,
+                 output_dir_root_override: Optional[Path] = None,
+                 dataset_name: str = "meld",
+                 input_mode: str = "audio_text",
+                 architecture_name_override: Optional[str] = "teacher_transformer", # Default its own arch name
+                 # Teacher-specific parameters with defaults
+                 teacher_text_model_name: str = "roberta-large",
+                 teacher_text_feature_dim: int = 1024,
+                 # teacher_audio_feature_dim will use self.audio_feature_dim from BaseConfig
+                 teacher_fusion_hidden_dim: int = 768,
+                 teacher_fusion_layers: int = 2,
+                 teacher_topic_dim: int = 100,
+                 teacher_comet_dim: int = 768,
+                 **kwargs): # Accept other kwargs for BaseConfig
+
+        # Call super().__init__ FIRST
+        super().__init__(
+            data_root_override=data_root_override,
+            output_dir_root_override=output_dir_root_override,
+            dataset_name=dataset_name,
+            input_mode=input_mode,
+            architecture_name_override=architecture_name_override,
+            **kwargs # Pass through any other kwargs
+        )
+
+        # Ensure the architecture name is correctly set for this specific config
+        self.architecture_name = "teacher_transformer" # Or "teacher" if that's the registered name
         
-        # Model-specific parameters
-        self.teacher_text_model_name = "roberta-large"
-        self.teacher_text_feature_dim = 1024  # RoBERTa-Large output
-        self.teacher_audio_feature_dim = self.audio_feature_dim  # WavLM output
-        self.teacher_fusion_hidden_dim = 768  # Fusion transformer hidden dim
-        self.teacher_fusion_layers = 2  # Number of transformer layers
-        self.teacher_topic_dim = 100  # Topic embedding dimension
-        self.teacher_comet_dim = 768  # COMET triples dimension 
+        # Set Teacher-specific parameters.
+        # Use getattr to allow YAML/CLI to override these defaults if they were set by from_args.
+        self.teacher_text_model_name = getattr(self, 'teacher_text_model_name', teacher_text_model_name)
+        self.teacher_text_feature_dim = getattr(self, 'teacher_text_feature_dim', teacher_text_feature_dim)
+        # teacher_audio_feature_dim typically defaults to BaseConfig's audio_feature_dim
+        self.teacher_audio_feature_dim = self.audio_feature_dim
+        self.teacher_fusion_hidden_dim = getattr(self, 'teacher_fusion_hidden_dim', teacher_fusion_hidden_dim)
+        self.teacher_fusion_layers = getattr(self, 'teacher_fusion_layers', teacher_fusion_layers)
+        self.teacher_topic_dim = getattr(self, 'teacher_topic_dim', teacher_topic_dim)
+        self.teacher_comet_dim = getattr(self, 'teacher_comet_dim', teacher_comet_dim) 

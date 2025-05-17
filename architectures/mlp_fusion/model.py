@@ -176,10 +176,39 @@ class MultimodalFusionMLP(nn.Module):
 class MLPFusionConfig(BaseConfig):
     """Configuration specific to MLP Fusion model."""
     
-    def __init__(self, architecture_name_override: Optional[str] = None):
-        super().__init__(architecture_name_override=architecture_name_override)
+    def __init__(self,
+                 data_root_override: Optional[Path] = None,
+                 output_dir_root_override: Optional[Path] = None,
+                 dataset_name: str = "meld",
+                 input_mode: str = "audio_text",
+                 architecture_name_override: Optional[str] = "mlp_fusion", # Default its own arch name
+                 # MLP-specific parameters with defaults
+                 mlp_hidden_dim: int = 256, # Moved from body to signature for clarity
+                 mlp_dropout_rate: float = 0.3, # Moved from body to signature
+                 **kwargs): # Accept other kwargs for BaseConfig
+
+        # Call super().__init__ FIRST, passing all arguments meant for BaseConfig
+        # and any other kwargs
+        super().__init__(
+            data_root_override=data_root_override,
+            output_dir_root_override=output_dir_root_override,
+            dataset_name=dataset_name,
+            input_mode=input_mode,
+            architecture_name_override=architecture_name_override,
+            **kwargs # Pass through any other kwargs
+        )
+
+        # Ensure the architecture name is correctly set for this specific config,
+        # overriding what super might have set if architecture_name_override was different.
         self.architecture_name = "mlp_fusion"
         
-        # Model-specific parameters
-        self.mlp_hidden_dim = 256
-        self.mlp_dropout_rate = 0.3 
+        # Set MLP-specific parameters.
+        # These will be overridden by values from mlp_fusion_default.yaml if present,
+        # or by CLI args if BaseConfig.from_args handles them.
+        self.mlp_hidden_dim = getattr(self, 'mlp_hidden_dim', mlp_hidden_dim) # Use value from YAML/CLI if set by from_args, else default
+        self.mlp_dropout_rate = getattr(self, 'mlp_dropout_rate', mlp_dropout_rate) # Use value from YAML/CLI if set, else default
+
+        # Any other MLPFusion specific overrides of BaseConfig defaults can go here.
+        # For example, if MLP Fusion *always* uses a specific text encoder,
+        # you could set it here, though it's better to keep it in the YAML for flexibility.
+        # self.text_encoder_model_name = "distilroberta-base" # This is in your YAML 

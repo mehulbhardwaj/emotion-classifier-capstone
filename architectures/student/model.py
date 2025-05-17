@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoModel, WavLMModel
 from typing import Optional
+from pathlib import Path
 
 from configs.base_config import BaseConfig
 
@@ -210,14 +211,42 @@ class StudentDistilledModel(nn.Module):
 class StudentConfig(BaseConfig):
     """Configuration specific to Student Distilled model."""
     
-    def __init__(self, architecture_name_override: Optional[str] = None):
-        super().__init__(architecture_name_override=architecture_name_override)
-        self.architecture_name = "student_distilled_gru"
+    def __init__(self,
+                 data_root_override: Optional[Path] = None,
+                 output_dir_root_override: Optional[Path] = None,
+                 dataset_name: str = "meld",
+                 input_mode: str = "audio_text",
+                 architecture_name_override: Optional[str] = "student_distilled_gru", # Default its own arch name
+                 # Student-specific parameters with defaults
+                 student_text_model_name: str = "distilroberta-base",
+                 student_text_feature_dim: int = 768,
+                 # student_audio_feature_dim will use self.audio_feature_dim from BaseConfig
+                 student_gru_hidden_dim: int = 256,
+                 student_gru_layers: int = 1,
+                 student_party_embed_dim: int = 64,
+                 **kwargs): # Accept other kwargs for BaseConfig
+
+        # Call super().__init__ FIRST
+        super().__init__(
+            data_root_override=data_root_override,
+            output_dir_root_override=output_dir_root_override,
+            dataset_name=dataset_name,
+            input_mode=input_mode,
+            architecture_name_override=architecture_name_override,
+            **kwargs # Pass through any other kwargs
+        )
+
+        # Ensure the architecture name is correctly set for this specific config
+        self.architecture_name = "student_distilled_gru" # Or "student" if that's the registered name
         
-        # Model-specific parameters
-        self.student_text_model_name = "distilroberta-base"
-        self.student_text_feature_dim = 768  # DistilRoBERTa output
-        self.student_audio_feature_dim = self.audio_feature_dim  # WavLM output
-        self.student_gru_hidden_dim = 256  # GRU hidden dimension
-        self.student_gru_layers = 1  # Number of GRU layers
-        self.student_party_embed_dim = 64  # Speaker embedding dimension 
+        # Set Student-specific parameters.
+        # Use getattr to allow YAML/CLI to override these defaults if they were set by from_args.
+        self.student_text_model_name = getattr(self, 'student_text_model_name', student_text_model_name)
+        self.student_text_feature_dim = getattr(self, 'student_text_feature_dim', student_text_feature_dim)
+        # student_audio_feature_dim typically defaults to BaseConfig's audio_feature_dim
+        # If it can be different, it should be handled similarly or set explicitly after super init.
+        # For now, assuming it uses self.audio_feature_dim from BaseConfig.
+        self.student_audio_feature_dim = self.audio_feature_dim 
+        self.student_gru_hidden_dim = getattr(self, 'student_gru_hidden_dim', student_gru_hidden_dim)
+        self.student_gru_layers = getattr(self, 'student_gru_layers', student_gru_layers)
+        self.student_party_embed_dim = getattr(self, 'student_party_embed_dim', student_party_embed_dim) 
