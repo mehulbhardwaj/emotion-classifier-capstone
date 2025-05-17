@@ -1,50 +1,51 @@
 # configs/mlp_fusion_default.yaml
 
-# --- General Project Settings ---
-architecture_name: "mlp_fusion" # For clarity and potential checks
-# dataset_name: "meld" # Default is "meld" from BaseConfig
-# input_mode: "audio_text" # Default is "audio_text" from BaseConfig
-# random_seed: 42 # Default is 42 from BaseConfig
-# device_name: "cuda" # Default determined by BaseConfig (e.g., cuda if available, else cpu)
-# num_dataloader_workers: 4 # Default is min(os.cpu_count(), 4) from BaseConfig
-# ffmpeg_path: "ffmpeg" # Default is "ffmpeg" from BaseConfig
+architecture_name: "mlp_fusion"
+experiment_name: "mlp_fusion_local_default" # Default experiment name for this local config
+
+# --- Paths (these are defaults for local execution, Colab YAML will override them) ---
+paths:
+  data_root: meld_data # Relative to project root (e.g., PROJECT_ROOT/meld_data)
+  output_dir_root: outputs # All outputs (models, logs, results) go under here (e.g. PROJECT_ROOT/outputs)
+
+# --- General Project Settings (can override BaseConfig defaults if needed for this arch) ---
+# dataset_name: "meld"
+# input_mode: "audio_text"
+# random_seed: 42
+# device_name: "cuda" # BaseConfig handles detection
+# num_dataloader_workers: 4 # BaseConfig handles default
+# ffmpeg_path: "ffmpeg"
 
 # --- Data Preparation ---
-run_mp4_to_wav_conversion: true # Explicit choice for this architecture's default
-# To force, use CLI: --force_wav_conversion
-run_hf_dataset_creation: true  # Explicit choice
-# To force, use CLI: --force_reprocess_hf_dataset
+run_mp4_to_wav_conversion: true
+run_hf_dataset_creation: true
 
 # Audio processing settings for Hugging Face dataset creation
-# sample_rate: 16000 # Default is 16000 from BaseConfig
+# sample_rate: 16000 # Default from BaseConfig
 # Text processing settings for Hugging Face dataset creation
-# ASR model to use if transcribing text during HF dataset creation (usually not needed for MELD with GT text)
-asr_model_name_for_hf_dataset: null # e.g., "openai/whisper-tiny.en"
+asr_model_name_for_hf_dataset: null # e.g., "openai/whisper-tiny.en" if needed
 use_asr_for_text_generation_in_hf_dataset: false
-text_max_length_for_hf_dataset: 128 # Default is 128 from BaseConfig, kept for potential arch-specific tuning visibility
+text_max_length_for_hf_dataset: 128 # Default from BaseConfig, visible for arch-specific tuning
 
 # --- Training Parameters ---
-num_epochs: 10
-batch_size: 32
-learning_rate: 0.0001
-optimizer_name: "AdamW"             # e.g., "Adam", "AdamW", "SGD"
-lr_scheduler_name: "linear"         # e.g., "linear", "cosine", "reduce_on_plateau"
+num_epochs: 10 # Arch-specific default
+batch_size: 32 # Arch-specific default
+learning_rate: 0.0001 # Arch-specific default
+optimizer_name: "AdamW"
+lr_scheduler_name: "linear"
 gradient_accumulation_steps: 1
-early_stopping_patience: 3          # Number of epochs with no improvement to wait
-mixed_precision_training: true      # true (for fp16), "bf16", or false
-model_save_dir_base_name: "models"  # Base directory for saving models
-experiment_name: "mlp_fusion_default_run" # Subfolder for this specific run's checkpoints & logs
+early_stopping_patience: 3
+mixed_precision_training: true
 
 # --- Evaluation Parameters ---
-eval_split: "dev"                   # "dev" or "test" to use for evaluation
+eval_split: "dev"
 
 # --- Inference Parameters ---
-infer_num_examples: 10              # Max examples to process or print for CSV inference
-# ASR model for inference if input_mode is "audio_only_asr" or text is missing
-asr_model_name: "openai/whisper-tiny.en" # e.g., "openai/whisper-base.en"
+infer_num_examples: 10
+asr_model_name: "openai/whisper-tiny.en" # For --inference mode if ASR is used
 
 # --- Dataset Specific Limits (for quick testing, can be overridden by CLI) ---
-limit_dialogues_train: null         # Set to an integer for quick tests, null for no limit
+limit_dialogues_train: null
 limit_dialogues_dev: null
 limit_dialogues_test: null
 
@@ -54,28 +55,10 @@ audio_encoder_model_name: "facebook/wav2vec2-base-960h"
 mlp_hidden_size: 768
 mlp_dropout_rate: 0.1
 
-# --- Audio Feature Params (used by build_hf_dataset) ---
-# BaseConfig provides defaults for: sample_rate, n_fft, hop_length, win_length, n_mels, f_min, f_max (derived from sample_rate), power, normalize_spectrogram, mel_scale.
-# They are removed from here to rely on BaseConfig defaults unless a specific override is needed for MLP Fusion.
-hop_length_ms: null # If null, will use hop_length (samples) from BaseConfig. If set, overrides hop_length.
-win_length_ms: null # If null, will use win_length (samples) from BaseConfig. If set, overrides win_length.
-# Example of overriding a BaseConfig audio param if needed for this specific architecture:
-# n_mels: 64
-# The following audio parameters are now removed as they are covered by BaseConfig defaults:
-# n_fft: 2048
-# hop_length: 512  # samples
-# win_length: 2048 # samples
-# n_mels: 128      # Number of Mel bands
-# f_min: 0.0       # Minimum H_z frequency
-# f_max: 8000.0    # Maximum H_z frequency (half of target_sample_rate is common)
-# power: 2.0       # Exponent for the magnitude spectrogram
-# normalize_spectrogram: true
-# mel_scale: "htk" # "htk" or "slaney"
-
-# Add at the top of the file, after architecture_name
-paths:
-  data_root: ./meld_data
-  processed_root: ./meld_data/processed/features/hf_datasets
-  ckpt_root: ./checkpoints
-  model_save_dir: ./models
-  results_dir: ./results 
+# --- Audio Feature Params (used by build_hf_dataset if different from BaseConfig) ---
+# BaseConfig provides defaults for: sample_rate, n_fft, hop_length, win_length, n_mels, etc.
+# Only list them here if MLP Fusion requires a specific override.
+# hop_length_ms: null # If null, will use hop_length (samples) from BaseConfig.
+# win_length_ms: null # If null, will use win_length (samples) from BaseConfig.
+# Example of overriding a BaseConfig audio param if needed:
+# n_mels: 64 
