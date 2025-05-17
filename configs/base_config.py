@@ -291,9 +291,14 @@ class BaseConfig:
 
         # Initial values for instantiation from CLI or defaults
         # These are passed to __init__
+        
+        # Correctly fetch from args, using default if CLI arg is None (not provided)
+        cli_dataset_name = args.dataset_name if hasattr(args, 'dataset_name') and args.dataset_name is not None else "meld"
+        cli_input_mode = args.input_mode if hasattr(args, 'input_mode') and args.input_mode is not None else "audio_text"
+
         init_kwargs = {
-            'dataset_name': getattr(args, 'dataset_name', "meld"), # Default if not in args
-            'input_mode': getattr(args, 'input_mode', "audio_text"), # Default if not in args
+            'dataset_name': cli_dataset_name,
+            'input_mode': cli_input_mode,
             'architecture_name_override': architecture_name_cli
         }
         # If CLI provides data_root or output_dir_root, use them for initial instantiation
