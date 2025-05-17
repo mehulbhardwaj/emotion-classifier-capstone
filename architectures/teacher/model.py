@@ -199,7 +199,7 @@ class TeacherConfig(BaseConfig):
                  teacher_text_model_name: str = "roberta-large",
                  teacher_text_feature_dim: int = 1024, # For roberta-large
                  # audio_encoder_model_name & audio_feature_dim are inherited from BaseConfig defaults or YAML
-                 # If Teacher needs specific *different* defaults for audio, define them here.
+                 # No need to define audio_encoder_model_name here if using BaseConfig's default or YAML override
                  teacher_fusion_hidden_dim: int = 768,
                  teacher_fusion_layers: int = 2,
                  teacher_fusion_nhead: int = 8, 
@@ -207,7 +207,6 @@ class TeacherConfig(BaseConfig):
                  teacher_fusion_dropout: float = 0.1, 
                  teacher_topic_dim: int = 100,
                  teacher_comet_dim: int = 768, 
-                 # learning_rate is inherited from BaseConfig defaults or YAML
                  **kwargs):
 
         super().__init__(
@@ -216,29 +215,12 @@ class TeacherConfig(BaseConfig):
             dataset_name=dataset_name,
             input_mode=input_mode,
             architecture_name_override=architecture_name_override,
-            **kwargs
+            **kwargs # This passes all other kwargs, including potentially audio_encoder_model_name
         )
-
-        self.architecture_name = "teacher_transformer"
-        
-        # Teacher-specific attributes are set here.
-        # Attributes like audio_encoder_model_name, audio_feature_dim, learning_rate are 
-        # already set on `self` by super().__init__() using BaseConfig defaults, 
-        # which are then potentially overridden by YAML or CLI args via BaseConfig.from_args().
-        # Only use getattr here if TeacherConfig defines its OWN default for a parameter that might also be in BaseConfig,
-        # and you want TeacherConfig's default to take precedence if YAML/CLI doesn't specify it.
+        self.architecture_name = "teacher_transformer" 
 
         self.teacher_text_model_name = getattr(self, 'teacher_text_model_name', teacher_text_model_name)
         self.teacher_text_feature_dim = getattr(self, 'teacher_text_feature_dim', teacher_text_feature_dim)
-        
-        # For audio features, self.audio_encoder_model_name and self.audio_feature_dim are already populated by BaseConfig.
-        # If Teacher model specifically needs a different audio feature dimension based on its fusion logic,
-        # distinct from the direct output of the base audio encoder, define a new attribute e.g.,
-        # self.teacher_specific_audio_dim = getattr(self, 'teacher_specific_audio_dim', self.audio_feature_dim)
-        # For now, we assume the Teacher model uses self.audio_feature_dim directly from BaseConfig.
-        # Let's add teacher_audio_feature_dim for clarity if it can be distinct for the teacher model
-        self.teacher_audio_feature_dim = getattr(self, 'teacher_audio_feature_dim', self.audio_feature_dim)
-
         self.teacher_fusion_hidden_dim = getattr(self, 'teacher_fusion_hidden_dim', teacher_fusion_hidden_dim)
         self.teacher_fusion_layers = getattr(self, 'teacher_fusion_layers', teacher_fusion_layers)
         self.teacher_fusion_nhead = getattr(self, 'teacher_fusion_nhead', teacher_fusion_nhead)
@@ -247,5 +229,12 @@ class TeacherConfig(BaseConfig):
         self.teacher_topic_dim = getattr(self, 'teacher_topic_dim', teacher_topic_dim)
         self.teacher_comet_dim = getattr(self, 'teacher_comet_dim', teacher_comet_dim)
         
-        # self.learning_rate is set by BaseConfig. No need to re-set with DEFAULT_LEARNING_RATE here.
-        # self.output_dim is a property in BaseConfig (self.num_classes). No need to set it here. 
+        # Ensure self.audio_encoder_model_name is NOT set here using DEFAULT_AUDIO_ENCODER_MODEL_NAME
+        # BaseConfig handles its default, and YAML/CLI can override it.
+        # If a line like the one below exists and causes a NameError, it should be removed.
+        # Example of what to remove if present:
+        # self.audio_encoder_model_name = getattr(self, 'audio_encoder_model_name', DEFAULT_AUDIO_ENCODER_MODEL_NAME)
+
+        # self.output_dim is a property in BaseConfig; do not assign it directly here.
+        # Example of what to remove if present:
+        # self.output_dim = self.num_classes 

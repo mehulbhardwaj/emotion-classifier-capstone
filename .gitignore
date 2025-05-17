@@ -54,6 +54,8 @@ meld_audiotext_emotion_classifier/results/
 # Logs and temporary files
 *.log
 *.tmp
+logs/
+lightning_logs/
 
 # Data - Exclude raw and processed data for both projects
 # MELD

@@ -240,8 +240,6 @@ class StudentConfig(BaseConfig):
                  architecture_name_override: Optional[str] = "student_distilled_gru",
                  student_text_model_name: str = "distilroberta-base",
                  student_text_feature_dim: int = 768,
-                 # audio_encoder_model_name and audio_feature_dim are inherited from BaseConfig
-                 # student_audio_feature_dim will use audio_feature_dim from BaseConfig
                  student_gru_hidden_dim: int = 256,
                  student_gru_layers: int = 1,
                  student_party_embed_dim: int = 64,
@@ -249,7 +247,6 @@ class StudentConfig(BaseConfig):
                  num_speakers_for_student_model: int = 20, 
                  train_speaker_classifier: bool = False,
                  speaker_loss_weight: float = 0.5,
-                 # learning_rate is inherited from BaseConfig
                  **kwargs):
 
         super().__init__(
@@ -260,62 +257,27 @@ class StudentConfig(BaseConfig):
             architecture_name_override=architecture_name_override,
             **kwargs
         )
-
         self.architecture_name = "student_distilled_gru"
-        
+
         self.student_text_model_name = getattr(self, 'student_text_model_name', student_text_model_name)
         self.student_text_feature_dim = getattr(self, 'student_text_feature_dim', student_text_feature_dim)
-        
-        # self.audio_encoder_model_name and self.audio_feature_dim are set by BaseConfig
-        self.student_audio_feature_dim = getattr(self, 'student_audio_feature_dim', self.audio_feature_dim)
-
         self.student_gru_hidden_dim = getattr(self, 'student_gru_hidden_dim', student_gru_hidden_dim)
         self.student_gru_layers = getattr(self, 'student_gru_layers', student_gru_layers)
         self.student_party_embed_dim = getattr(self, 'student_party_embed_dim', student_party_embed_dim)
         self.student_classifier_dropout = getattr(self, 'student_classifier_dropout', student_classifier_dropout)
-        
-        self.num_speakers_for_student_model = getattr(self, 'num_speakers_for_student_model', num_speakers_for_student_model)
-        
+        self.num_speakers = getattr(self, 'num_speakers_for_student_model', num_speakers_for_student_model)
         self.train_speaker_classifier = getattr(self, 'train_speaker_classifier', train_speaker_classifier)
         self.speaker_loss_weight = getattr(self, 'speaker_loss_weight', speaker_loss_weight)
 
-        # self.learning_rate is set by BaseConfig.
-        # self.output_dim is a property in BaseConfig (returns self.num_classes).
-        # BaseConfig.finalize_config (called from from_args) should set self.num_classes.
-        if not hasattr(self, 'num_classes'):
-            print(f"Warning: 'num_classes' not found on StudentConfig instance during __init__. This should be set by BaseConfig.finalize_config(). Defaulting to 7 (MELD) for now.")
-            self.num_classes = 7 
-        
+        # self.output_dim is a property in BaseConfig; do not assign it directly here.
+        # Example of what to remove if present:
+        # self.output_dim = self.num_classes
+
         # Ensure self.num_speakers (used by the model for speaker embedding) is available.
         # BaseConfig should set this in finalize_config as well.
         if not hasattr(self, 'num_speakers'): 
              print(f"Warning: 'num_speakers' not found on StudentConfig. This should be set by BaseConfig. Defaulting to 12 (MELD) for now.")
              self.num_speakers = 12 
-
-        # The following lines are to be explicitly REMOVED:
-        # if not hasattr(self, 'num_classes'):
-        #     self.num_classes = 7 # Default for MELD
-        #     print(f"Warning: 'num_classes' not found on StudentConfig, defaulting to {self.num_classes}. Should be set by BaseConfig.")
-        # if not hasattr(self, 'num_speakers'): # This is dataset specific for MELD
-        #      self.num_speakers = 12 # Default for MELD if not overridden
-        #      print(f"Warning: 'num_speakers' not found on StudentConfig, defaulting to {self.num_speakers}. Should be set by BaseConfig.")
-        # self.output_dim = self.num_classes
-        # REMOVE ALL REPETITIVE self.attribute = self.attribute lines from the end of this __init__ method.
-
-        # No need to set self.output_dim, it's a property: self.output_dim -> self.num_classes.
-
-        # REMOVE REPETITIVE ASSIGNMENTS THAT WERE HERE
-        # self.audio_encoder_model_name = self.audio_encoder_model_name
-        # ... (many similar lines) ...
-
-        # Ensure num_classes (used for self.output_dim) and other BaseConfig attrs are present
-        # These are usually set in BaseConfig.finalize_config()
-        if not hasattr(self, 'num_classes'):
-            self.num_classes = 7 # Default for MELD
-            print(f"Warning: 'num_classes' not found on StudentConfig, defaulting to {self.num_classes}. Should be set by BaseConfig.")
-        if not hasattr(self, 'num_speakers'): # This is dataset specific for MELD
-             self.num_speakers = 12 # Default for MELD if not overridden
-             print(f"Warning: 'num_speakers' not found on StudentConfig, defaulting to {self.num_speakers}. Should be set by BaseConfig.")
 
         # Ensure the final output_dim for emotion classification is correctly linked to num_classes
         self.output_dim = self.num_classes
