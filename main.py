@@ -402,7 +402,7 @@ def main():
         setattr(cfg, "experiment_name",
                 args.experiment_name if args.experiment_name else args.architecture)
 
-    print(f"Configuration loaded for architecture: {cfg.architecture_name_cli}, "
+    print(f"Configuration loaded for architecture: {cfg.architecture_name}, "
           f"dataset: {cfg.dataset_name}, input_mode: {cfg.input_mode}")
     print(f"Experiment name: {cfg.experiment_name}")
     print(f"Device set to: {cfg.device}")
