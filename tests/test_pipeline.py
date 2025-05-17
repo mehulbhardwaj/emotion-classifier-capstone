@@ -214,9 +214,16 @@ def test_run_main_script_minimal(test_run_env_setup):
     # From MELDDataModule _get_hf_dataset_path:
     # hf_dataset_dir_for_split = self.cfg.processed_features_dir / "hf_datasets" / split / "processed_data" / cache_params_str
     # Our test_config.yaml sets limit_dialogues_train=1, input_mode defaults to audio_text (so use_asr=False)
-    cache_params_str = "asr_False_limit_1" # Based on default input_mode (audio_text -> asr=False) and limit_dialogues_train=1
+    # cache_params_str = "asr_False_limit_1" # Based on default input_mode (audio_text -> asr=False) and limit_dialogues_train=1
+    # expected_hf_train_dataset_path = (
+    #     test_run_data_root / "processed" / "features" / "hf_datasets" / "train" / "processed_data" / cache_params_str
+    # )
+
+    # Corrected path based on main.py save logic and MELDDataModule updated load logic:
+    # cfg.processed_hf_dataset_dir / split_name
+    # where cfg.processed_hf_dataset_dir = PROJECT_ROOT / "test_main_run_data" / "processed" / "features" / "hf_datasets"
     expected_hf_train_dataset_path = (
-        test_run_data_root / "processed" / "features" / "hf_datasets" / "train" / "processed_data" / cache_params_str
+        test_run_data_root / "processed" / "features" / "hf_datasets" / "train"
     )
 
     assert expected_hf_train_dataset_path.exists(), \

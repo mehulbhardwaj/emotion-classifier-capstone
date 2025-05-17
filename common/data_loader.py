@@ -39,47 +39,27 @@ class MELDDataModule:
     def _get_hf_dataset_path(self, split):
         """
         Constructs the path to the preprocessed Hugging Face dataset for a given split.
-        Mirrors the saving logic in scripts/build_hf_dataset.py.
+        This path should match where main.py/_run_data_preparation saves the dataset.
+        Original save path in main.py: cfg.processed_hf_dataset_dir / split_name
         """
-        use_asr = self.cfg.input_mode == "audio_only_asr"
+        # cfg.processed_hf_dataset_dir is project_root/dataset_name_data/processed/features/hf_datasets
+        dataset_path = self.cfg.processed_hf_dataset_dir / split
         
-        limit_dialogues = None
-        if split == 'train':
-            limit_dialogues = getattr(self.cfg, 'limit_dialogues_train', None)
-        elif split == 'dev':
-            limit_dialogues = getattr(self.cfg, 'limit_dialogues_dev', None)
-        elif split == 'test':
-            limit_dialogues = getattr(self.cfg, 'limit_dialogues_test', None)
-
-        cache_params_str = f"asr_{use_asr}_limit_{limit_dialogues if limit_dialogues is not None else 'all'}"
+        # The old logic for cache_params_str is removed to align with main.py's current save behavior.
+        # If versioning of processed datasets is needed later, both saving and loading logic would need updates.
+        # For now, assume main.py --prepare_data (with relevant --limit args) creates the definitive version.
+        # use_asr = self.cfg.input_mode == "audio_only_asr"
+        # limit_dialogues = None
+        # if split == 'train':
+        #     limit_dialogues = getattr(self.cfg, 'limit_dialogues_train', None)
+        # elif split == 'dev':
+        #     limit_dialogues = getattr(self.cfg, 'limit_dialogues_dev', None)
+        # elif split == 'test':
+        #     limit_dialogues = getattr(self.cfg, 'limit_dialogues_test', None)
+        # cache_params_str = f"asr_{use_asr}_limit_{limit_dialogues if limit_dialogues is not None else 'all'}"
+        # hf_dataset_dir_for_split = self.cfg.processed_features_dir / "hf_datasets" / split / "processed_data" / cache_params_str
         
-        # Path structure from build_hf_dataset.py:
-        # processed_features_dir / "hf_datasets" / split / "processed_data" / cache_params_str
-        # Ensure cfg.processed_features_dir is the base (e.g., data/processed/meld/features)
-        dataset_path = self.cfg.processed_features_dir / "hf_datasets" / self.cfg.dataset_name / split / "processed_data" / cache_params_str
-        # Note: build_hf_dataset.py saves under ... / hf_datasets / split / ...
-        # The EDA script for processed features loads from cfg.processed_features_dir / split
-        # For consistency, build_hf_dataset should ideally save to a path that MELDDataModule can easily predict.
-        # Let's adjust the path construction here to be more robust if `cfg.dataset_name` is part of `cfg.processed_features_dir`
-        
-        # Revised path construction, assuming cfg.processed_features_dir is like 'data/processed/meld/features'
-        # and build_hf_dataset.py saves under 'data/processed/meld/features/hf_datasets/meld/train/...'
-        # This seems complex. A simpler structure would be cfg.processed_hf_dataset_dir / split / cache_params_str
-        
-        # Let's use the path format derived from build_hf_dataset.py:
-        # cfg.processed_features_dir / "hf_datasets" / split_name / "processed_data" / cache_params_str
-        # We need to remove dataset_name from the path if cfg.processed_features_dir already includes it.
-        # For now, let's assume cfg.processed_features_dir = "data/processed/features" (generic)
-        # And dataset_name is "meld". So path becomes:
-        # "data/processed/features" / "hf_datasets" / "meld" / split / "processed_data" / cache_params_str
-
-        # Path from build_hf_dataset.py:
-        # active_cfg.processed_features_dir / "hf_datasets" / split / "processed_data" / cache_params_str
-        # Here, active_cfg.processed_features_dir itself might be 'data/processed/meld/features'.
-        # So, the 'meld' (dataset_name) part is implicitly in processed_features_dir.
-
-        hf_dataset_dir_for_split = self.cfg.processed_features_dir / "hf_datasets" / split / "processed_data" / cache_params_str
-        return hf_dataset_dir_for_split
+        return dataset_path
 
     def prepare_data(self):
         """

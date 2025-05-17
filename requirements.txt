@@ -1,0 +1,11 @@
+torch>=2.3.0
+torchaudio>=2.3.0
+transformers>=4.40
+datasets>=2.19
+pytorch_lightning>=2.2
+rich
+librosa
+soundfile
+tqdm
+scikit-learn
+tensorboard 

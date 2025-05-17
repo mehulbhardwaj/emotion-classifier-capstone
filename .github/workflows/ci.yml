@@ -1,0 +1,61 @@
+name: Python CI
+
+on:
+  push:
+    branches: [ main, master, develop ] # Adjust branches as needed
+  pull_request:
+    branches: [ main, master, develop ] # Adjust branches as needed
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10'] # Match your environment.yml
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Miniconda
+      uses: conda-incubator/setup-miniconda@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+        auto-update-conda: true
+        # mamba-version: "*" # Optional: for faster environment creation
+        # channels: pytorch,conda-forge,defaults # Optional: if different from yml
+        environment-file: environment.yml
+        activate-environment: emotion-classification-dlfa # Match name in environment.yml
+        # use-mamba: true # Optional: for faster environment creation
+
+    - name: Install PyTorch (CPU version for CI)
+      shell: bash -l {0} # Important to use the activated conda env
+      run: |
+        # The environment.yml specifies pytorch>=2.0.0 without specific CUDA version for broader compatibility.
+        # For CI, we might want to explicitly install a CPU version if GPU tests are not intended/supported.
+        # However, if environment.yml already handles this (e.g. by not pinning to a CUDA version),
+        # this step might be redundant or could conflict. 
+        # For now, assuming environment.yml is general enough for CPU.
+        # If issues arise, explicitly install pytorch cpuonly version:
+        # conda install pytorch torchvision torchaudio cpuonly -c pytorch -y
+        echo "PyTorch should be installed from environment.yml. Checking version:"
+        python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+        python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')" # Should be False
+
+    - name: Install project dependencies (confirming environment)
+      shell: bash -l {0}
+      run: |
+        conda env list
+        echo "Installing/confirming dependencies from environment.yml"
+        # The setup-miniconda action should have already created and activated the env
+        # based on environment-file. This step is more of a confirmation or for any missed pip packages.
+        # pip install -r requirements.txt # If you had a requirements.txt for pip packages
+        # For conda, the environment is already set up by setup-miniconda with environment-file.
+        # If environment.yml includes pip dependencies, they should also be installed.
+        echo "Checking key pip packages:"
+        pip list | grep -E "transformers|datasets|pytest"
+
+    - name: Run tests with pytest
+      shell: bash -l {0}
+      run: |
+        pytest tests/test_pipeline.py -v 

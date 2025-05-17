@@ -37,7 +37,7 @@ from architectures import get_model_architecture, get_default_config_class_for_a
 # --- Helper Functions for Main Modes (kept in main.py as per user's current file structure) ---
 
 def _run_data_preparation(cfg: BaseConfig, args: argparse.Namespace):
-    print("Starting data preparation pipeline...")
+        print("Starting data preparation pipeline...")
     if cfg.run_mp4_to_wav_conversion:
         print("Step 1: Converting MP4s to WAVs...")
         try:
@@ -95,70 +95,70 @@ def _run_data_preparation(cfg: BaseConfig, args: argparse.Namespace):
         print("Skipping Hugging Face dataset creation as per configuration.")
     
 def _run_eda(cfg: BaseConfig, args: argparse.Namespace):
-    print("Running Exploratory Data Analysis...")
+        print("Running Exploratory Data Analysis...")
     print("Step 1: Preliminary EDA on raw data...")
-    try:
+        try:
         from scripts.preliminary_eda import main as preliminary_eda_main
-        preliminary_eda_main(cfg_param=cfg)
-    except Exception as e:
-        print(f"Error during preliminary_eda_main: {e}")
+            preliminary_eda_main(cfg_param=cfg)
+        except Exception as e:
+            print(f"Error during preliminary_eda_main: {e}")
 
     print("\nStep 2: EDA on processed Hugging Face features...")
-    try:
+        try:
         from scripts.processed_features_eda import main as processed_features_eda_main
-        processed_features_eda_main(cfg_param=cfg)
-    except Exception as e:
-        print(f"Error during processed_features_eda_main: {e}")
+            processed_features_eda_main(cfg_param=cfg)
+        except Exception as e:
+            print(f"Error during processed_features_eda_main: {e}")
 
 def _run_training(cfg: BaseConfig, args: argparse.Namespace, model_class, trainer_class):
-    print(f"Training model: {args.architecture}")
+        print(f"Training model: {args.architecture}")
     data_module = MELDDataModule(cfg)
     data_module.prepare_data()
     _ = data_module.setup() # datasets not directly used here, dataloaders are
-    dataloaders = data_module.get_dataloaders()
+        dataloaders = data_module.get_dataloaders()
         
     trainer = trainer_class(cfg=cfg, model_class=model_class)
-    trainer.train(
-        train_dataloader=dataloaders['train'],
-        val_dataloader=dataloaders['dev']
-    )
-    print("Training complete.")
+        trainer.train(
+            train_dataloader=dataloaders['train'],
+            val_dataloader=dataloaders['dev']
+        )
+        print("Training complete.")
         
     eval_split_after_train = getattr(cfg, 'eval_split', 'test')
     print(f"Evaluating on {eval_split_after_train} set after training...")
-    metrics = trainer.evaluate(
+        metrics = trainer.evaluate(
         dataloader=dataloaders[eval_split_after_train],
-    )
+        )
     print(f"Metrics on {eval_split_after_train} set: {metrics}")
         
 def _run_evaluation(cfg: BaseConfig, args: argparse.Namespace, model_class, trainer_class):
-    print(f"Evaluating model from: {args.evaluate_model}")
+        print(f"Evaluating model from: {args.evaluate_model}")
     model_checkpoint_path = Path(args.evaluate_model)
     if not model_checkpoint_path.exists():
-        print(f"Error: Model checkpoint {model_checkpoint_path} not found.")
-        return
+            print(f"Error: Model checkpoint {model_checkpoint_path} not found.")
+            return
         
     data_module = MELDDataModule(cfg)
-    data_module.prepare_data()
+        data_module.prepare_data()
     _ = data_module.setup()
-    dataloaders = data_module.get_dataloaders()
+        dataloaders = data_module.get_dataloaders()
         
-    trainer = trainer_class(cfg=cfg, model_class=model_class) 
+        trainer = trainer_class(cfg=cfg, model_class=model_class) 
     trainer.load_model(str(model_checkpoint_path))
         
     eval_split = getattr(cfg, 'eval_split', 'test')
     print(f"Evaluating on {eval_split} split...")
-    metrics = trainer.evaluate(
+        metrics = trainer.evaluate(
         dataloader=dataloaders[eval_split]
-    )
+        )
     print(f"Evaluation metrics for {eval_split} split: {metrics}")
     
 def _run_inference(cfg: BaseConfig, args: argparse.Namespace, model_class):
-    print(f"Running inference with model: {args.inference}")
+        print(f"Running inference with model: {args.inference}")
     model_checkpoint_path = Path(args.inference)
     if not model_checkpoint_path.exists():
-        print(f"Error: Model checkpoint {model_checkpoint_path} not found.")
-        return
+            print(f"Error: Model checkpoint {model_checkpoint_path} not found.")
+            return
 
     # Make sure text_encoder_model_name is available on cfg, needed for AutoTokenizer
     # This should be set by the architecture-specific config or the YAML file.
@@ -182,24 +182,24 @@ def _run_inference(cfg: BaseConfig, args: argparse.Namespace, model_class):
         else:
             model_instance.load_state_dict(checkpoint)
             print(f"Model state loaded successfully (assumed raw state_dict): {model_checkpoint_path}")
-    except Exception as e:
-        print(f"Error loading model state_dict from {model_checkpoint_path}: {e}")
-        return
+        except Exception as e:
+            print(f"Error loading model state_dict from {model_checkpoint_path}: {e}")
+            return
         
-    model_instance.to(cfg.device)
-    model_instance.eval()
+        model_instance.to(cfg.device)
+        model_instance.eval()
 
-    text_tokenizer = AutoTokenizer.from_pretrained(cfg.text_encoder_model_name)
-    asr_processor = None
+        text_tokenizer = AutoTokenizer.from_pretrained(cfg.text_encoder_model_name)
+        asr_processor = None
     asr_model_instance = None
 
     if cfg.input_mode == "audio_only_asr" and cfg.asr_model_name:
         print(f"ASR mode: Loading ASR model {cfg.asr_model_name}")
-        try:
-            asr_processor = WhisperProcessor.from_pretrained(cfg.asr_model_name)
-            asr_model_instance = WhisperForConditionalGeneration.from_pretrained(cfg.asr_model_name).to(cfg.device)
-            asr_model_instance.eval()
-        except Exception as e:
+            try:
+                asr_processor = WhisperProcessor.from_pretrained(cfg.asr_model_name)
+                asr_model_instance = WhisperForConditionalGeneration.from_pretrained(cfg.asr_model_name).to(cfg.device)
+                asr_model_instance.eval()
+            except Exception as e:
             print(f"Warning: Could not load ASR components for {cfg.asr_model_name}: {e}")
         
         inference_engine = EmotionInferenceEngine(
