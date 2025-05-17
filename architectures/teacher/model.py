@@ -9,7 +9,8 @@ import torch
 import torch.nn as nn
 from transformers import RobertaModel, WavLMModel
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from typing import Optional, Path
+from typing import Optional
+from pathlib import Path
 
 from configs.base_config import BaseConfig
 
