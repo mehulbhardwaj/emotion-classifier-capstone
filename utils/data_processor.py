@@ -121,7 +121,7 @@ class MELDDataModule(pl.LightningDataModule):
             self.datasets[split] = MELDDataset(hf_ds, text_name, audio_type)
 
     # --------------------------- unified collate -------------------------- #
-        def _unified_collate_fn(self, batch):
+    def _unified_collate_fn(self, batch):
         """Always emit (wav, wav_mask, txt, txt_mask, labels)."""
         raw = self.datasets[self._current_split].collate_fn(batch)
 
