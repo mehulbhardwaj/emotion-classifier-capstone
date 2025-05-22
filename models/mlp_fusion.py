@@ -57,8 +57,11 @@ class MultimodalFusionMLP(LightningModule):
         self.fusion_mlp = nn.Sequential(
             nn.Linear(hidden_dim, mlp_hidden),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(mlp_hidden, out_dim),
+            nn.Dropout(0.3),
+            nn.Linear(mlp_hidden, mlp_hidden // 2),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(mlp_hidden // 2, out_dim),
         )
 
         # ------------------------------------------------------------------
