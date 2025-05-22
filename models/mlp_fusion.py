@@ -19,7 +19,7 @@ class MultimodalFusionMLP(LightningModule):
     3. CosineAnnealingLR scheduler from YAML.
     4. Adjustable MLP hidden size via config.mlp_hidden_size.
     """
-fe_i
+
     def __init__(self, config, **kwargs):
         super().__init__()
         self.config = config
