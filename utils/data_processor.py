@@ -132,87 +132,112 @@ class MELDDataset(Dataset):
         return collated_batch
 
 
-class MELDDataModule(pl.LightningDataModule):
-    """PyTorch Lightning data module for MELD dataset."""
+class MELDDataset(Dataset):
+    """Dataset for MELD emotion classification."""
     
-    def __init__(self, config):
-        """Initialize the data module.
+    def __init__(
+        self, 
+        hf_dataset_split,
+        text_encoder_model_name: str,
+        audio_input_type: str = "hf_features",
+        text_max_length: int = 128,
+        split_name: str = "train"
+    ):
+        """Initialize the dataset.
         
         Args:
-            config: Configuration object
+            hf_dataset_split: HuggingFace dataset split
+            text_encoder_model_name: Name of text encoder model
+            audio_input_type: Type of audio input ("hf_features" or "raw_wav")
+            text_max_length: Maximum text length for tokenization
+            split_name: Name of the split ("train", "dev", "test")
         """
-        super().__init__()
-        self.config = config
-        self.splits = ["train", "dev", "test"]
-        self.datasets = {}
+        self.hf_dataset = hf_dataset_split
+        self.text_encoder_model_name = text_encoder_model_name
+        self.audio_input_type = audio_input_type
+        self.text_max_length = text_max_length
+        self.split_name = split_name
         
-    def prepare_data(self):
-        """Check if dataset exists."""
-        # Check if HuggingFace dataset directory exists
-        hf_dataset_dir = self.config.hf_dataset_dir
-        if not hf_dataset_dir.exists():
-            print(f"Warning: HuggingFace dataset directory not found: {hf_dataset_dir}")
-            print(f"Please run prepare_data.py first.")
+        # Load tokenizer for text processing
+        self.tokenizer = AutoTokenizer.from_pretrained(text_encoder_model_name)
     
-    def setup(self, stage: Optional[str] = None):
-        """Set up datasets for each split."""
-        # Set up all splits if stage is None, otherwise set up only the requested split
-        splits_to_setup = self.splits if stage is None else [stage]
+    def __len__(self):
+        return len(self.hf_dataset)
+    
+    def __getitem__(self, idx):
+        """Get a data sample."""
+        item = self.hf_dataset[idx]
+        sample = {}
         
-        for split in splits_to_setup:
+        # Process text
+        if "text" in item:
+            text = item["text"]
+            encoded_text = self.tokenizer(
+                text,
+                max_length=self.text_max_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt"
+            )
+            sample["text_input_ids"] = encoded_text["input_ids"].squeeze(0)
+            sample["text_attention_mask"] = encoded_text["attention_mask"].squeeze(0)
+        
+        # Process audio
+        if self.audio_input_type == "hf_features" and "audio_features" in item:
+            # Use pre-extracted features
+            audio_features = torch.tensor(item["audio_features"])
+            sample["audio_input_values"] = audio_features
+        elif self.audio_input_type == "raw_wav" and "audio_path" in item:
+            # Load raw audio (to be processed by the model)
             try:
-                # Load HuggingFace dataset from disk
-                hf_dataset_path = self.config.hf_dataset_dir / split
-                if not hf_dataset_path.exists():
-                    print(f"Warning: HuggingFace dataset not found for split '{split}': {hf_dataset_path}")
-                    continue
-                
-                hf_dataset_split = load_from_disk(str(hf_dataset_path))
-                
-                # Create MELD dataset
-                self.datasets[split] = MELDDataset(
-                    hf_dataset_split=hf_dataset_split,
-                    text_encoder_model_name=self.config.text_encoder_model_name,
-                    audio_input_type=self.config.audio_input_type,
-                    text_max_length=self.config.text_max_length,
-                    split_name=split
-                )
-                
-                print(f"Loaded {split} dataset with {len(self.datasets[split])} samples")
-                
+                waveform, sample_rate = torchaudio.load(item["audio_path"])
+                sample["raw_audio"] = waveform
+                sample["sampling_rate"] = sample_rate
             except Exception as e:
-                print(f"Error setting up {split} dataset: {e}")
-    
-    def train_dataloader(self):
-        """Get train dataloader."""
-        return self._create_dataloader("train")
-    
-    def val_dataloader(self):
-        """Get validation dataloader."""
-        return self._create_dataloader("dev")
-    
-    def test_dataloader(self):
-        """Get test dataloader."""
-        return self._create_dataloader("test")
-    
-    def _create_dataloader(self, split_name):
-        """Create a DataLoader for a given split."""
-        if split_name not in self.datasets:
-            self.setup(split_name)
+                print(f"Error loading audio file {item['audio_path']}: {e}")
+                # Create empty tensor as fallback
+                sample["raw_audio"] = torch.zeros(1, 16000)  # 1 second of silence
+                sample["sampling_rate"] = 16000
         
-        if split_name not in self.datasets:
-            raise ValueError(f"Dataset for split '{split_name}' not available.")
+        # Process label
+        if "label" in item:
+            sample["labels"] = torch.tensor(item["label"], dtype=torch.long)
         
-        dataset = self.datasets[split_name]
+        return sample
+    
+    def collate_fn(self, batch):
+        """Collate function for DataLoader."""
+        collated_batch = {}
         
-        return DataLoader(
-            dataset,
-            batch_size=self.config.batch_size,
-            shuffle=(split_name == "train"),
-            num_workers=4,
-            collate_fn=dataset.collate_fn,
-            pin_memory=True
-        )
+        # Handle text inputs
+        if "text_input_ids" in batch[0]:
+            text_ids = [item["text_input_ids"] for item in batch]
+            text_mask = [item["text_attention_mask"] for item in batch]
+            collated_batch["text_input_ids"] = torch.stack(text_ids)
+            collated_batch["text_attention_mask"] = torch.stack(text_mask)
+        
+        # Handle audio inputs
+        if self.audio_input_type == "raw_wav" and "raw_audio" in batch[0]:
+            collated_batch["raw_audio"] = [item["raw_audio"] for item in batch]
+            if all("sampling_rate" in item for item in batch):
+                # Use the first sample rate (they should all be the same)
+                collated_batch["sampling_rate"] = batch[0]["sampling_rate"]
+        elif "audio_input_values" in batch[0]:
+            audio_features = [item["audio_input_values"] for item in batch]
+            # Pad sequences to the same length
+            collated_batch["audio_input_values"] = torch.nn.utils.rnn.pad_sequence(
+                audio_features, batch_first=True, padding_value=0.0
+            )
+            # Create attention mask based on padding
+            collated_batch["audio_attention_mask"] = \
+                (collated_batch["audio_input_values"] != 0.0).long()
+        
+        # Handle labels
+        if "labels" in batch[0]:
+            labels = [item["labels"] for item in batch]
+            collated_batch["labels"] = torch.stack(labels)
+        
+        return collated_batch
 
 
 def download_meld_dataset(data_dir: Path):
