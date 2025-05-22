@@ -1,2 +1,5 @@
-from .base_config import BaseConfig as Config
-__all__ = ["Config"]
+from .base_config import Config  # new name
+
+# Backwards-compat alias
+BaseConfig = Config
+__all__ = ["Config", "BaseConfig"]
