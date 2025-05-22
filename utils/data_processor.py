@@ -1,243 +1,162 @@
-"""Simplified data processing for MELD dataset.
+"""utils/data_processor.py – self‑contained replacement.
 
-Handles downloading, preprocessing, and loading the MELD dataset.
+This file defines:
+1. **MELDDataset** – unchanged tokenisation & feature handling.
+2. **MELDDataModule** – Lightning DataModule that *always* outputs
+   `(wav, wav_mask, txt, txt_mask, labels)` tuples so model code can
+   unpack consistently for train/val/test.
+
+Assumed external deps are already installed (datasets, torchaudio,
+transformers).
 """
 
-import os
-import torch
-import pandas as pd
-import numpy as np
-import torchaudio
 from pathlib import Path
-from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer
-from datasets import load_from_disk, Dataset as HFDataset
+from typing import Dict, Tuple, List, Any
+
+import torch
+import torchaudio
 import pytorch_lightning as pl
-from typing import Optional, Dict, List, Any, Tuple
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer
+import datasets as hf
 
-
-def ensure_dir(dir_path):
-    """Ensure a directory exists, creating it if necessary."""
-    if isinstance(dir_path, str):
-        dir_path = Path(dir_path)
-    dir_path.mkdir(parents=True, exist_ok=True)
-    return dir_path
-
+# -----------------------------------------------------------------------------
+# 1.  Low‑level MELDDataset (same as original implementation)
+# -----------------------------------------------------------------------------
 
 class MELDDataset(Dataset):
-    """Dataset for MELD emotion classification."""
-    
-    def __init__(
-        self, 
-        hf_dataset_split,
-        text_encoder_model_name: str,
-        audio_input_type: str = "hf_features",
-        text_max_length: int = 128,
-        split_name: str = "train"
-    ):
-        """Initialize the dataset.
-        
-        Args:
-            hf_dataset_split: HuggingFace dataset split
-            text_encoder_model_name: Name of text encoder model
-            audio_input_type: Type of audio input ("hf_features" or "raw_wav")
-            text_max_length: Maximum text length for tokenization
-            split_name: Name of the split ("train", "dev", "test")
-        """
-        self.hf_dataset = hf_dataset_split
-        self.text_encoder_model_name = text_encoder_model_name
-        self.audio_input_type = audio_input_type
-        self.text_max_length = text_max_length
-        self.split_name = split_name
-        
-        # Load tokenizer for text processing
-        self.tokenizer = AutoTokenizer.from_pretrained(text_encoder_model_name)
-    
-    def __len__(self):
-        return len(self.hf_dataset)
-    
-    def __getitem__(self, idx):
-        """Get a data sample."""
-        item = self.hf_dataset[idx]
-        sample = {}
-        
-        # Process text
-        if "text" in item:
-            text = item["text"]
-            encoded_text = self.tokenizer(
-                text,
-                max_length=self.text_max_length,
-                padding="max_length",
-                truncation=True,
-                return_tensors="pt"
-            )
-            sample["text_input_ids"] = encoded_text["input_ids"].squeeze(0)
-            sample["text_attention_mask"] = encoded_text["attention_mask"].squeeze(0)
-        
-        # Process audio
-        if self.audio_input_type == "hf_features" and "audio_features" in item:
-            # Use pre-extracted features
-            audio_features = torch.tensor(item["audio_features"])
-            sample["audio_input_values"] = audio_features
-        elif self.audio_input_type == "raw_wav" and "audio_path" in item:
-            # Load raw audio (to be processed by the model)
-            try:
-                waveform, sample_rate = torchaudio.load(item["audio_path"])
-                sample["raw_audio"] = waveform
-                sample["sampling_rate"] = sample_rate
-            except Exception as e:
-                print(f"Error loading audio file {item['audio_path']}: {e}")
-                # Create empty tensor as fallback
-                sample["raw_audio"] = torch.zeros(1, 16000)  # 1 second of silence
-                sample["sampling_rate"] = 16000
-        
-        # Process label
-        if "label" in item:
-            sample["labels"] = torch.tensor(item["label"], dtype=torch.long)
-        
-        return sample
-    
-    def collate_fn(self, batch):
-        """Collate function for DataLoader."""
-        collated_batch = {}
-        
-        # Handle text inputs
-        if "text_input_ids" in batch[0]:
-            text_ids = [item["text_input_ids"] for item in batch]
-            text_mask = [item["text_attention_mask"] for item in batch]
-            collated_batch["text_input_ids"] = torch.stack(text_ids)
-            collated_batch["text_attention_mask"] = torch.stack(text_mask)
-        
-        # Handle audio inputs
-        if self.audio_input_type == "raw_wav" and "raw_audio" in batch[0]:
-            collated_batch["raw_audio"] = [item["raw_audio"] for item in batch]
-            if all("sampling_rate" in item for item in batch):
-                # Use the first sample rate (they should all be the same)
-                collated_batch["sampling_rate"] = batch[0]["sampling_rate"]
-        elif "audio_input_values" in batch[0]:
-            audio_features = [item["audio_input_values"] for item in batch]
-            # Pad sequences to the same length
-            collated_batch["audio_input_values"] = torch.nn.utils.rnn.pad_sequence(
-                audio_features, batch_first=True, padding_value=0.0
-            )
-            # Create attention mask based on padding
-            collated_batch["audio_attention_mask"] = \
-                (collated_batch["audio_input_values"] != 0.0).long()
-        
-        # Handle labels
-        if "labels" in batch[0]:
-            labels = [item["labels"] for item in batch]
-            collated_batch["labels"] = torch.stack(labels)
-        
-        return collated_batch
+    """HuggingFace split → tokenised + (optionally) raw‑audio tensors."""
 
-
-class MELDDataset(Dataset):
-    """Dataset for MELD emotion classification."""
-    
     def __init__(
-        self, 
-        hf_dataset_split,
-        text_encoder_model_name: str,
-        audio_input_type: str = "hf_features",
-        text_max_length: int = 128,
-        split_name: str = "train"
-    ):
-        """Initialize the dataset.
-        
-        Args:
-            hf_dataset_split: HuggingFace dataset split
-            text_encoder_model_name: Name of text encoder model
-            audio_input_type: Type of audio input ("hf_features" or "raw_wav")
-            text_max_length: Maximum text length for tokenization
-            split_name: Name of the split ("train", "dev", "test")
-        """
-        self.hf_dataset = hf_dataset_split
-        self.text_encoder_model_name = text_encoder_model_name
+        self,
+        hf_split: hf.arrow_dataset.Dataset,
+        text_encoder_name: str,
+        audio_input_type: str = "hf_features",  # "hf_features" | "raw_wav"
+        text_max_len: int = 128,
+    ) -> None:
+        self.ds = hf_split
+        self.tokenizer = AutoTokenizer.from_pretrained(text_encoder_name)
         self.audio_input_type = audio_input_type
-        self.text_max_length = text_max_length
-        self.split_name = split_name
-        
-        # Load tokenizer for text processing
-        self.tokenizer = AutoTokenizer.from_pretrained(text_encoder_model_name)
-    
-    def __len__(self):
-        return len(self.hf_dataset)
-    
-    def __getitem__(self, idx):
-        """Get a data sample."""
-        item = self.hf_dataset[idx]
-        sample = {}
-        
-        # Process text
-        if "text" in item:
-            text = item["text"]
-            encoded_text = self.tokenizer(
-                text,
-                max_length=self.text_max_length,
-                padding="max_length",
-                truncation=True,
-                return_tensors="pt"
-            )
-            sample["text_input_ids"] = encoded_text["input_ids"].squeeze(0)
-            sample["text_attention_mask"] = encoded_text["attention_mask"].squeeze(0)
-        
-        # Process audio
-        if self.audio_input_type == "hf_features" and "audio_features" in item:
-            # Use pre-extracted features
-            audio_features = torch.tensor(item["audio_features"])
-            sample["audio_input_values"] = audio_features
-        elif self.audio_input_type == "raw_wav" and "audio_path" in item:
-            # Load raw audio (to be processed by the model)
+        self.text_max_len = text_max_len
+
+    # --------------------------- basic dataset api ------------------------- #
+    def __len__(self) -> int:
+        return len(self.ds)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        row = self.ds[idx]
+        sample: Dict[str, Any] = {}
+
+        # ---- text ----------------------------------------------------------
+        tokens = self.tokenizer(
+            row["text"],
+            max_length=self.text_max_len,
+            truncation=True,
+            padding="max_length",
+            return_tensors="pt",
+        )
+        sample["text_input_ids"] = tokens["input_ids"].squeeze(0)
+        sample["text_attention_mask"] = tokens["attention_mask"].squeeze(0)
+
+        # ---- audio ---------------------------------------------------------
+        if self.audio_input_type == "hf_features":
+            sample["audio_input_values"] = torch.tensor(row["audio_features"])
+        else:  # raw_wav
             try:
-                waveform, sample_rate = torchaudio.load(item["audio_path"])
-                sample["raw_audio"] = waveform
-                sample["sampling_rate"] = sample_rate
-            except Exception as e:
-                print(f"Error loading audio file {item['audio_path']}: {e}")
-                # Create empty tensor as fallback
-                sample["raw_audio"] = torch.zeros(1, 16000)  # 1 second of silence
-                sample["sampling_rate"] = 16000
-        
-        # Process label
-        if "label" in item:
-            sample["labels"] = torch.tensor(item["label"], dtype=torch.long)
-        
+                wav, sr = torchaudio.load(row["audio_path"])
+            except Exception:
+                wav, sr = torch.zeros(1, 16000), 16000
+            sample["raw_audio"] = wav
+            sample["sampling_rate"] = sr
+
+        # ---- label ---------------------------------------------------------
+        sample["labels"] = torch.tensor(row["label"], dtype=torch.long)
         return sample
-    
-    def collate_fn(self, batch):
-        """Collate function for DataLoader."""
-        collated_batch = {}
-        
-        # Handle text inputs
-        if "text_input_ids" in batch[0]:
-            text_ids = [item["text_input_ids"] for item in batch]
-            text_mask = [item["text_attention_mask"] for item in batch]
-            collated_batch["text_input_ids"] = torch.stack(text_ids)
-            collated_batch["text_attention_mask"] = torch.stack(text_mask)
-        
-        # Handle audio inputs
-        if self.audio_input_type == "raw_wav" and "raw_audio" in batch[0]:
-            collated_batch["raw_audio"] = [item["raw_audio"] for item in batch]
-            if all("sampling_rate" in item for item in batch):
-                # Use the first sample rate (they should all be the same)
-                collated_batch["sampling_rate"] = batch[0]["sampling_rate"]
-        elif "audio_input_values" in batch[0]:
-            audio_features = [item["audio_input_values"] for item in batch]
-            # Pad sequences to the same length
-            collated_batch["audio_input_values"] = torch.nn.utils.rnn.pad_sequence(
-                audio_features, batch_first=True, padding_value=0.0
-            )
-            # Create attention mask based on padding
-            collated_batch["audio_attention_mask"] = \
-                (collated_batch["audio_input_values"] != 0.0).long()
-        
-        # Handle labels
-        if "labels" in batch[0]:
-            labels = [item["labels"] for item in batch]
-            collated_batch["labels"] = torch.stack(labels)
-        
-        return collated_batch
+
+    # ---------------------------- collate_fn ------------------------------ #
+    def collate_fn(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+        coll: Dict[str, Any] = {}
+        # text
+        coll["text_input_ids"]     = torch.stack([b["text_input_ids"] for b in batch])
+        coll["text_attention_mask"] = torch.stack([b["text_attention_mask"] for b in batch])
+        # audio
+        if self.audio_input_type == "hf_features":
+            feats = [b["audio_input_values"] for b in batch]
+            coll["audio_input_values"] = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True)
+            coll["audio_attention_mask"] = (coll["audio_input_values"] != 0).long()
+        else:
+            coll["raw_audio"]     = [b["raw_audio"] for b in batch]
+            coll["sampling_rate"] = batch[0]["sampling_rate"]
+        # label
+        coll["labels"] = torch.stack([b["labels"] for b in batch])
+        return coll
+
+# -----------------------------------------------------------------------------
+# 2.  Lightning DataModule with unified 5‑tuple output
+# -----------------------------------------------------------------------------
+
+class MELDDataModule(pl.LightningDataModule):
+    """DataModule that normalises every DataLoader batch to 5 tensors.
+
+    `(wav, wav_mask, txt, txt_mask, labels)`
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        self.cfg = config
+        self.datasets: Dict[str, MELDDataset] = {}
+        self._current_split: str | None = None  # used inside collate_fn
+
+    # -------------------------- Lightning hooks --------------------------- #
+    def setup(self, stage: str | None = None):
+        if self.datasets:
+            return  # already initialised
+
+        root = Path(self.cfg.data_root) / "processed" / "features" / "hf_datasets"
+        text_name  = self.cfg.text_encoder_model_name
+        audio_type = self.cfg.audio_input_type
+
+        for split in ["train", "dev", "test"]:
+            hf_ds = hf.load_from_disk(root / split)
+            self.datasets[split] = MELDDataset(hf_ds, text_name, audio_type)
+
+    # --------------------------- unified collate -------------------------- #
+    def _unified_collate_fn(self, batch):
+        raw = self.datasets[self._current_split].collate_fn(batch)
+
+        # Case A: already 5‑tuple
+        if isinstance(raw, (list, tuple)) and len(raw) == 5:
+            return raw
+
+        # Case B: dict → convert
+        wav  = raw.get("audio_input_values")  # (B, T, F) or None
+        txt  = raw["text_input_ids"]
+        wav_mask = raw.get("audio_attention_mask")
+        if wav_mask is None:
+            wav_mask = torch.ones((wav.size(0), wav.size(1)), dtype=torch.long)
+        txt_mask = raw["text_attention_mask"]
+        labels   = raw["labels"]
+        return wav, wav_mask, txt, txt_mask, labels
+
+    def _loader(self, split: str, shuffle: bool) -> DataLoader:
+        self._current_split = split
+        return DataLoader(
+            self.datasets[split],
+            batch_size=self.cfg.batch_size,
+            shuffle=shuffle,
+            num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
+            pin_memory=True,
+            collate_fn=self._unified_collate_fn,
+        )
+
+    def train_dataloader(self):
+        return self._loader("train", shuffle=True)
+
+    def val_dataloader(self):
+        return self._loader("dev", shuffle=False)
+
+    def test_dataloader(self):
+        return self._loader("test", shuffle=False)
 
 
 def download_meld_dataset(data_dir: Path):
