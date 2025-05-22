@@ -117,15 +117,15 @@ class MultimodalFusionMLP(LightningModule):
         self.val_f1.reset()
 
     def test_step(self, batch, batch_idx):
-    wav, wav_mask, txt, txt_mask, labels = batch
-    logits = self(wav, wav_mask, txt, txt_mask)
-    loss = self.criterion(logits, labels)
-    preds = logits.argmax(dim=-1)
-    acc  = (preds == labels).float().mean()
-    self.log("test_loss", loss)
-    self.log("test_acc",  acc)
-    self.test_f1.update(preds, labels)
-    return {"preds": preds, "targets": labels}
+        wav, wav_mask, txt, txt_mask, labels = batch
+        logits = self(wav, wav_mask, txt, txt_mask)
+        loss = self.criterion(logits, labels)
+        preds = logits.argmax(dim=-1)
+        acc  = (preds == labels).float().mean()
+        self.log("test_loss", loss)
+        self.log("test_acc",  acc)
+        self.test_f1.update(preds, labels)
+        return {"preds": preds, "targets": labels}
 
     def on_test_epoch_end(self):
         f1 = self.test_f1.compute()
