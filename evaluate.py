@@ -15,7 +15,7 @@ from pathlib import Path
 from sklearn.metrics import classification_report, confusion_matrix
 import pytorch_lightning as pl
 
-from config import Config
+from configs import Config
 from utils.data_processor import MELDDataModule
 from models.mlp_fusion import MultimodalFusionMLP
 from models.teacher import TeacherTransformer

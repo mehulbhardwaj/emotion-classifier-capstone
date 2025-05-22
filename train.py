@@ -14,7 +14,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from pathlib import Path
-from config import Config
+from configs import Config
 from utils.data_processor import MELDDataModule
 
 # Import model architectures
