@@ -129,7 +129,7 @@ class MELDDataModule(pl.LightningDataModule):
                 hf_ds,
                 self.cfg.text_encoder_model_name,
                 self.cfg.audio_input_type,
-                text_max_len=self.cfg.get("text_max_len", 128),
+                text_max_len=getattr(self.cfg, "text_max_len", 128),
             )
 
     def _to_5tuple(self, raw):
