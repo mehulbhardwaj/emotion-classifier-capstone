@@ -24,22 +24,22 @@ from utils.sampler import ClassBalancedSampler
 # ──────────────────────────────────────────────────────────────────────────────
 
 class MELDDataset(Dataset):
-    """Return dict with text, raw audio or pre-extracted features, and label."""
+    """Return dict with text, raw audio or pre‑extracted features, and label."""
+
     def __init__(
         self,
-        hf_split,                  # 🤗 Dataset split
+        hf_split: hf.arrow_dataset.Dataset,
         text_encoder_name: str,
-        audio_input_type: str = "raw_wav",  # or "hf_features"
+        audio_input_type: str = "raw_wav",
         text_max_len: int = 128,
     ) -> None:
-        # alias HF split so both .ds and .hf_dataset exist
-        self.ds         = hf_split
+        # underlying HF split (for sampling and direct indexing)
+        self.ds = hf_split
         self.hf_dataset = hf_split
-
         # tokenizer for text
-        self.tokenizer        = AutoTokenizer.from_pretrained(text_encoder_name)
+        self.tok = AutoTokenizer.from_pretrained(text_encoder_name)
         self.audio_input_type = audio_input_type
-        self.text_max_len     = text_max_len
+        self.text_max_len = text_max_len
 
     def __len__(self):
         return len(self.ds)
@@ -49,14 +49,14 @@ class MELDDataset(Dataset):
         out: Dict[str, Any] = {}
 
         # --- text ----------------------------------------------------------
-        toks = self.tokenizer(
+        toks = self.tok(
             row["text"],
             max_length=self.text_max_len,
             truncation=True,
             padding="max_length",
             return_tensors="pt",
         )
-        out["text_input_ids"]     = toks["input_ids"].squeeze(0)
+        out["text_input_ids"] = toks["input_ids"].squeeze(0)
         out["text_attention_mask"] = toks["attention_mask"].squeeze(0)
 
         # --- audio ---------------------------------------------------------
@@ -64,12 +64,8 @@ class MELDDataset(Dataset):
             out["audio_input_values"] = torch.tensor(row["audio_features"])
         else:
             wav, sr = self._safe_load_wav(str(row["audio_path"]), fallback_sr=16000)
-            # down-mix to mono
-            if wav.size(0) > 1:
-                wav = wav.mean(0, keepdim=True)
-            # normalize
             wav = wav / wav.abs().max().clamp(min=1e-5)
-            out["raw_audio"]     = wav
+            out["raw_audio"] = wav
             out["sampling_rate"] = sr
 
         # --- label ---------------------------------------------------------
@@ -82,30 +78,26 @@ class MELDDataset(Dataset):
             wav, sr = torchaudio.load(path)
         except Exception:
             wav, sr = torch.zeros(1, fallback_sr), fallback_sr
+        if wav.shape[0] > 1:
+            wav = wav.mean(0, keepdim=True)
         return wav, sr
 
     def collate_fn(self, batch):
         coll: Dict[str, Any] = {}
-
-        # text
-        coll["text_input_ids"]     = torch.stack([b["text_input_ids"]     for b in batch])
+        coll["text_input_ids"] = torch.stack([b["text_input_ids"] for b in batch])
         coll["text_attention_mask"] = torch.stack([b["text_attention_mask"] for b in batch])
 
-        # audio features or raw wav
         if "audio_input_values" in batch[0]:
             feats = [b["audio_input_values"] for b in batch]
-            padded = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True, padding_value=0.0)
-            coll["audio_input_values"]   = padded
-            coll["audio_attention_mask"] = (padded.abs().sum(-1) != 0).long()
+            coll["audio_input_values"] = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True)
+            coll["audio_attention_mask"] = (coll["audio_input_values"].abs().sum(-1) != 0).long()
         else:
-            wavs = [b["raw_audio"].squeeze(0) for b in batch]
-            # leave as list for faster shuffling, we’ll pad later
-            coll["raw_audio"]      = wavs
-            coll["sampling_rate"]  = batch[0]["sampling_rate"]
+            coll["raw_audio"] = [b["raw_audio"] for b in batch]
+            coll["sampling_rate"] = batch[0]["sampling_rate"]
 
-        # labels
         coll["labels"] = torch.stack([b["labels"] for b in batch])
         return coll
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 2.  Lightning DataModule (unified 5‑tuple output)
@@ -113,11 +105,11 @@ class MELDDataset(Dataset):
 
 class MELDDataModule(pl.LightningDataModule):
     """Outputs (wav, wav_mask, txt, txt_mask, labels) for all splits."""
+
     def __init__(self, config):
         super().__init__()
-        self.cfg: Any = config
+        self.cfg = config
         self.datasets: Dict[str, MELDDataset] = {}
-        self._current_split: str | None = None
 
     def setup(self, stage: str | None = None):
         if self.datasets:
@@ -128,38 +120,41 @@ class MELDDataModule(pl.LightningDataModule):
             self.datasets[split] = MELDDataset(
                 hf_ds,
                 self.cfg.text_encoder_model_name,
-                self.cfg.audio_input_type,
+                audio_input_type=getattr(self.cfg, "audio_input_type", "raw_wav"),
                 text_max_len=getattr(self.cfg, "text_max_len", 128),
             )
 
-    def _to_5tuple(self, raw):
-        txt, txt_mask, labels = raw["text_input_ids"], raw["text_attention_mask"], raw["labels"]
+    def _to_5tuple(self, raw: Dict[str, Any]):
+        txt = raw["text_input_ids"]
+        txt_mask = raw["text_attention_mask"]
+        labels = raw["labels"]
         if "audio_input_values" in raw:
-            wav, wav_mask = raw["audio_input_values"], raw["audio_attention_mask"]
+            wav = raw["audio_input_values"]
+            wav_mask = raw["audio_attention_mask"]
         else:
-            wavs = [w.unsqueeze(0) if w.ndim==1 else w for w in raw["raw_audio"]]
+            wavs = [a.squeeze(0) for a in raw["raw_audio"]]
             wav = torch.nn.utils.rnn.pad_sequence(wavs, batch_first=True, padding_value=0.0)
-            wav_mask = (wav.abs().sum(-1) != 0).long()
+            wav_mask = (wav != 0.0).long()
         return wav, wav_mask, txt, txt_mask, labels
 
     def _loader(self, split: str, shuffle: bool):
         ds = self.datasets[split]
-
         if split == "train":
             labels = torch.tensor(ds.hf_dataset["label"])
             sampler = ClassBalancedSampler(labels)
             shuffle = False
         else:
             sampler = None
+            shuffle = False
 
         return DataLoader(
             ds,
             batch_size=self.cfg.batch_size,
-            sampler=sampler,
             shuffle=shuffle,
+            sampler=sampler,
             num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
             pin_memory=True,
-            collate_fn=lambda b: self._to_5tuple(ds.collate_fn(b)),
+            collate_fn=lambda batch: self._to_5tuple(ds.collate_fn(batch)),
         )
 
     def train_dataloader(self):
