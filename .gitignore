@@ -84,4 +84,4 @@ meld_data/
 
 
 # GCP
-gcp_set-up.sh
+gcp_set-up.sh*.ckpt
