@@ -28,15 +28,19 @@ class MELDDataset(Dataset):
 
     def __init__(
         self,
-        hf_split: hf.arrow_dataset.Dataset,
+        hf_split,                  # 🤗 Dataset split
         text_encoder_name: str,
-        audio_input_type: str = "raw_wav",  # default to raw_wav
+        audio_input_type: str = "raw_wav",  # or "hf_features"
         text_max_len: int = 128,
     ) -> None:
-        self.ds = hf_split
-        self.tok = AutoTokenizer.from_pretrained(text_encoder_name)
+        # alias the HF split under both names so DataModule and __getitem__ agree
+        self.hf_dataset = hf_split
+        self.ds         = hf_split
+
+        # tokenizer for text
+        self.tokenizer        = AutoTokenizer.from_pretrained(text_encoder_name)
         self.audio_input_type = audio_input_type
-        self.text_max_len = text_max_len
+        self.text_max_len     = text_max_len
 
     def __len__(self):
         return len(self.ds)
