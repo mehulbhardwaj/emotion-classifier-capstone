@@ -1,4 +1,6 @@
 # utils/sampler.py
+import torch
+
 class ClassBalancedSampler(torch.utils.data.Sampler):
     def __init__(self, labels):
         class_count = torch.bincount(labels)
