@@ -85,7 +85,7 @@ class MultimodalFusionMLP(pl.LightningModule):
         )
 
         # Loss function
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = nn.CrossEntropyLoss(weight=torch.tensor(config.class_weights))
 
     def _load_text_encoder(self, model_name: str) -> nn.Module:
         """Load text encoder model."""
