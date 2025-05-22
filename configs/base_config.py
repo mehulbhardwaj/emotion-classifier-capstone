@@ -7,7 +7,7 @@ It replaces the complex BaseConfig hierarchy with a simple, flat structure.
 import os
 import torch
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Optional, List, Dict, Any
 
 
