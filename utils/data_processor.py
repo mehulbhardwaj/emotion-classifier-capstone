@@ -17,6 +17,7 @@ import datasets as hf
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
+from utils.sampler import ClassBalancedSampler
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1.  MELDDataset (lean but robust)
@@ -137,6 +138,16 @@ class MELDDataModule(pl.LightningDataModule):
 
     def _loader(self, split: str, shuffle: bool):
         ds = self.datasets[split]
+
+        if split == "train":
+            # pull the raw labels out of the underlying HF-split (or your wrapped dataset)
+            labels = torch.tensor(ds.hf_dataset["label"])
+            sampler = ClassBalancedSampler(labels)
+            shuffle = False
+        else:
+            sampler = None
+            shuffle = False
+      
         return DataLoader(
             ds,
             batch_size=self.cfg.batch_size,
