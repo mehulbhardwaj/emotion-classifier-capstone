@@ -131,7 +131,8 @@ class MELDDataModule(pl.LightningDataModule):
         else:
             wavs = [a.squeeze(0) for a in raw["raw_audio"]]
             wav = torch.nn.utils.rnn.pad_sequence(wavs, batch_first=True, padding_value=0.0)
-            wav_mask = (wav.abs().sum(-1) != 0).long()
+            #wav_mask = (wav.abs().sum(-1) != 0).long()
+            wav_mask = (wav != 0.0).long()
         return wav, wav_mask, txt, txt_mask, labels
 
     def _loader(self, split: str, shuffle: bool):
