@@ -1,174 +1,158 @@
-"""utils/data_processor.py – self‑contained replacement.
+"""utils/data_processor.py – raw‑audio‑first version
 
-This file defines:
-1. **MELDDataset** – unchanged tokenisation & feature handling.
-2. **MELDDataModule** – Lightning DataModule that *always* outputs
-   `(wav, wav_mask, txt, txt_mask, labels)` tuples so model code can
-   unpack consistently for train/val/test.
-
-Assumed external deps are already installed (datasets, torchaudio,
-transformers).
+* Works when `audio_input_type` is set to **"raw_wav"** (no pre‑computed
+  features).  If `audio_features` happen to exist, it still handles them.
+* Always outputs `(wav, wav_mask, txt, txt_mask, labels)`.
+* Stereo clips are down‑mixed to mono via `.mean(0)` instead of `squeeze(0)`.
+* PosixPath → str cast for `load_from_disk`.
 """
+from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Tuple, List, Any
+from typing import Dict, List, Any
 
 import torch
 import torchaudio
+import datasets as hf
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
-import datasets as hf
 
-# -----------------------------------------------------------------------------
-# 1.  Low‑level MELDDataset (same as original implementation)
-# -----------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 1.  MELDDataset (lean but robust)
+# ──────────────────────────────────────────────────────────────────────────────
 
 class MELDDataset(Dataset):
-    """HuggingFace split → tokenised + (optionally) raw‑audio tensors."""
+    """Return dict with text, raw audio or pre‑extracted features, and label."""
 
     def __init__(
         self,
         hf_split: hf.arrow_dataset.Dataset,
         text_encoder_name: str,
-        audio_input_type: str = "hf_features",  # "hf_features" | "raw_wav"
+        audio_input_type: str = "raw_wav",  # default to raw_wav
         text_max_len: int = 128,
     ) -> None:
         self.ds = hf_split
-        self.tokenizer = AutoTokenizer.from_pretrained(text_encoder_name)
+        self.tok = AutoTokenizer.from_pretrained(text_encoder_name)
         self.audio_input_type = audio_input_type
         self.text_max_len = text_max_len
 
-    # --------------------------- basic dataset api ------------------------- #
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self.ds)
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def __getitem__(self, idx):
         row = self.ds[idx]
-        sample: Dict[str, Any] = {}
+        out: Dict[str, Any] = {}
 
-        # ---- text ----------------------------------------------------------
-        tokens = self.tokenizer(
+        # --- text ----------------------------------------------------------
+        toks = self.tok(
             row["text"],
             max_length=self.text_max_len,
             truncation=True,
             padding="max_length",
             return_tensors="pt",
         )
-        sample["text_input_ids"] = tokens["input_ids"].squeeze(0)
-        sample["text_attention_mask"] = tokens["attention_mask"].squeeze(0)
+        out["text_input_ids"] = toks["input_ids"].squeeze(0)
+        out["text_attention_mask"] = toks["attention_mask"].squeeze(0)
 
-        # ---- audio ---------------------------------------------------------
-        if self.audio_input_type == "hf_features":
-            sample["audio_input_values"] = torch.tensor(row["audio_features"])
-        else:  # raw_wav
-            try:
-                wav, sr = torchaudio.load(row["audio_path"])
-            except Exception:
-                wav, sr = torch.zeros(1, 16000), 16000
-            sample["raw_audio"] = wav
-            sample["sampling_rate"] = sr
+        # --- audio ---------------------------------------------------------
+        if self.audio_input_type == "hf_features" and "audio_features" in row:
+            out["audio_input_values"] = torch.tensor(row["audio_features"])
+        else:  # fallback to raw wav
+            wav, sr = self._safe_load_wav(row["audio_path"], fallback_sr=16000)
+            # normalise to ±1
+            wav = wav / wav.abs().max().clamp(min=1e-5)
+            out["raw_audio"] = wav
+            out["sampling_rate"] = sr
 
-        # ---- label ---------------------------------------------------------
-        sample["labels"] = torch.tensor(row["label"], dtype=torch.long)
-        return sample
+        # --- label ---------------------------------------------------------
+        out["labels"] = torch.tensor(row["label"], dtype=torch.long)
+        return out
 
-    # ---------------------------- collate_fn ------------------------------ #
-    def collate_fn(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    @staticmethod
+    def _safe_load_wav(path: str, fallback_sr: int):
+        try:
+            wav, sr = torchaudio.load(path)
+        except Exception:
+            wav, sr = torch.zeros(1, fallback_sr), fallback_sr
+        # down‑mix stereo → mono
+        if wav.shape[0] > 1:
+            wav = wav.mean(0, keepdim=True)
+        return wav, sr
+
+    # ---------------------------- collate_fn ------------------------------
+    def collate_fn(self, batch):
         coll: Dict[str, Any] = {}
-        # text
         coll["text_input_ids"]     = torch.stack([b["text_input_ids"] for b in batch])
         coll["text_attention_mask"] = torch.stack([b["text_attention_mask"] for b in batch])
-        # audio
-        if self.audio_input_type == "hf_features":
+
+        if "audio_input_values" in batch[0]:  # pre‑extracted features
             feats = [b["audio_input_values"] for b in batch]
             coll["audio_input_values"] = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True)
-            coll["audio_attention_mask"] = (coll["audio_input_values"] != 0).long()
-        else:
-            coll["raw_audio"]     = [b["raw_audio"] for b in batch]
+            coll["audio_attention_mask"] = (coll["audio_input_values"].abs().sum(-1) != 0).long()
+        else:  # raw wav
+            wavs = [b["raw_audio"].squeeze(0) for b in batch]
+            coll["raw_audio"] = wavs
             coll["sampling_rate"] = batch[0]["sampling_rate"]
-        # label
         coll["labels"] = torch.stack([b["labels"] for b in batch])
         return coll
 
-# -----------------------------------------------------------------------------
-# 2.  Lightning DataModule with unified 5‑tuple output
-# -----------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 2.  Lightning DataModule (unified 5‑tuple output)
+# ──────────────────────────────────────────────────────────────────────────────
 
 class MELDDataModule(pl.LightningDataModule):
-    """DataModule that normalises every DataLoader batch to 5 tensors.
-
-    `(wav, wav_mask, txt, txt_mask, labels)`
-    """
+    """Outputs (wav, wav_mask, txt, txt_mask, labels) for all splits."""
 
     def __init__(self, config):
         super().__init__()
         self.cfg = config
         self.datasets: Dict[str, MELDDataset] = {}
-        self._current_split: str | None = None  # used inside collate_fn
+        self._current_split: str | None = None
 
-    # -------------------------- Lightning hooks --------------------------- #
     def setup(self, stage: str | None = None):
         if self.datasets:
-            return  # already initialised
-
+            return
         root = Path(self.cfg.data_root) / "processed" / "features" / "hf_datasets"
-        text_name  = self.cfg.text_encoder_model_name
-        audio_type = self.cfg.audio_input_type
-
-        for split in ["train", "dev", "test"]:
-            hf_ds = hf.load_from_disk(root / split)
-            self.datasets[split] = MELDDataset(hf_ds, text_name, audio_type)
-
-    # --------------------------- unified collate -------------------------- #
-    def _unified_collate_fn(self, batch):
-        """Always emit (wav, wav_mask, txt, txt_mask, labels)."""
-        raw = self.datasets[self._current_split].collate_fn(batch)
-
-        # Case A: already a 5‑tuple
-        if isinstance(raw, (list, tuple)) and len(raw) == 5:
-            return raw
-
-        # Case B: dict coming from MELDDataset.collate_fn
-        txt       = raw["text_input_ids"]
-        txt_mask  = raw["text_attention_mask"]
-        labels    = raw["labels"]
-
-        # ――― audio handling ―――
-        if "audio_input_values" in raw:                          # hf_features path
-            wav      = raw["audio_input_values"]
-            wav_mask = raw.get("audio_attention_mask")
-            if wav_mask is None:
-                wav_mask = (wav.abs().sum(dim=-1) != 0).long()    # fallback mask
-        else:                                                    # raw_wav path
-            raw_audio = raw["raw_audio"]                        # list of (C,T) tensors
-            # pad to (B, T)
-            wav = torch.nn.utils.rnn.pad_sequence(
-                [a.squeeze(0) for a in raw_audio], batch_first=True, padding_value=0.0
+        for split in ("train", "dev", "test"):
+            hf_ds = hf.load_from_disk(str(root / split))
+            self.datasets[split] = MELDDataset(
+                hf_ds,
+                self.cfg.text_encoder_model_name,
+                self.cfg.audio_input_type,
             )
-            wav_mask = (wav.abs().sum(dim=-1) != 0).long()
 
+    # ---------------- unified collate → 5‑tuple ---------------------------
+    def _to_5tuple(self, raw):
+        txt, txt_mask, labels = raw["text_input_ids"], raw["text_attention_mask"], raw["labels"]
+        if "audio_input_values" in raw:
+            wav = raw["audio_input_values"]
+            wav_mask = raw["audio_attention_mask"]
+        else:
+            wavs = [a.squeeze(0) for a in raw["raw_audio"]]
+            wav = torch.nn.utils.rnn.pad_sequence(wavs, batch_first=True, padding_value=0.0)
+            wav_mask = (wav.abs().sum(-1) != 0).long()
         return wav, wav_mask, txt, txt_mask, labels
 
-    def _loader(self, split: str, shuffle: bool) -> DataLoader:
-        self._current_split = split
+    def _loader(self, split: str, shuffle: bool):
+        ds = self.datasets[split]
         return DataLoader(
-            self.datasets[split],
+            ds,
             batch_size=self.cfg.batch_size,
             shuffle=shuffle,
             num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
             pin_memory=True,
-            collate_fn=self._unified_collate_fn,
+            collate_fn=lambda batch: self._to_5tuple(ds.collate_fn(batch)),
         )
 
     def train_dataloader(self):
-        return self._loader("train", shuffle=True)
+        return self._loader("train", True)
 
     def val_dataloader(self):
-        return self._loader("dev", shuffle=False)
+        return self._loader("dev", False)
 
     def test_dataloader(self):
-        return self._loader("test", shuffle=False)
+        return self._loader("test", False)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
