@@ -1,0 +1,55 @@
+---
+title: Simplified Data Flow
+---
+graph LR
+    %% Data Sources
+    A[Raw MELD Data]
+    B[CSV Metadata]
+    
+    %% Processing Steps
+    subgraph Data_Preparation["Data Preparation"]
+        C[Download Script]
+        D[Audio Converter]
+        E[Feature Extractor]
+        F[Dataset Builder]
+    end
+    
+    subgraph Model_Training["Model Training"]
+        G[Data Loader]
+        H[Model]
+        I[Trainer]
+    end
+    
+    %% Outputs
+    J[Processed Dataset]
+    K[Trained Model]
+    L[Evaluation Metrics]
+    
+    %% Data Flow
+    A --> C
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> J
+    J --> G
+    G --> H
+    H --> I
+    I --> K
+    I --> L
+    
+    %% Styling
+    classDef source fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef process fill:#bbf,stroke:#333,stroke-width:2px;
+    classDef output fill:#bfb,stroke:#333,stroke-width:2px;
+    
+    class A,B source
+    class C,D,E,F,G,H,I process
+    class J,K,L output
+    
+    %% Links
+    click C "https://github.com/yourusername/emotion-classification-dlfa/blob/main/scripts/download_meld_dataset.py" _blank
+    click D "https://github.com/yourusername/emotion-classification-dlfa/blob/main/scripts/prepare_dataset/audio_converter.py" _blank
+    click E "https://github.com/yourusername/emotion-classification-dlfa/blob/main/scripts/prepare_dataset/audio_feature_extractor.py" _blank
+    click F "https://github.com/yourusername/emotion-classification-dlfa/blob/main/scripts/prepare_dataset/commands.py" _blank
+    click I "https://github.com/yourusername/emotion-classification-dlfa/blob/main/train.py" _blank

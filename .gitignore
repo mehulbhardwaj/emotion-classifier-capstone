@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Conda environment files
+# If you export your env to a file, you might want to commit environment.yml but not platform-specific ones.
+# environment.yml # Typically committed
+# *.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Dataset and data files
+meld_audiotext_emotion_classifier/data/raw/MELD.Raw/
+meld_audiotext_emotion_classifier/data/raw/MELD.Raw.tar.gz
+meld_audiotext_emotion_classifier/data/processed/
+meld_audiotext_emotion_classifier/results/
+
+# Logs and temporary files
+*.log
+*.tmp
+logs/
+lightning_logs/
+
+# Data - Exclude raw and processed data for both projects
+# MELD
+meld_audiotext_emotion_classifier/data/raw/
+meld_audiotext_emotion_classifier/data/processed_features/
+# IEMOCAP
+iemocap_audiotext_emotion_classifier/data/raw/
+iemocap_audiotext_emotion_classifier/data/processed_features/
+
+# Results - EDA plots and other results are often fine to commit if not too large,
+# but if they become very numerous or large, consider ignoring specific large files within results.
+# For now, let's commit them unless they become problematic.
+# meld_audiotext_emotion_classifier/results/eda/
+# iemocap_audiotext_emotion_classifier/results/eda/
+
+# Hugging Face Cache (if it ever gets created locally in project, though usually in ~/.cache)
+.huggingface/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Local files (if any)
+*.local
+
+meld_data/ 
+
+
+# GCP
+gcp_set-up.sh

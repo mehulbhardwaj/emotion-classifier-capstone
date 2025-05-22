@@ -1,0 +1,51 @@
+# Test configuration for running main.py in a controlled environment
+
+# Test configuration
+# Note: All paths are relative to the project root
+dataset_name: "meld"
+
+# Paths for test data
+raw_data_dir: "tests/test_data"  # Contains raw CSVs and videos
+processed_audio_output_dir: "tests/test_data/audio"  # For processed audio files
+processed_hf_dataset_dir: "tests/test_data/processed/features/hf_datasets"  # For HF datasets
+
+audio_input_type: "raw_wav" # Ensure consistency between data prep and training
+audio_encoder_model_name: "facebook/wav2vec2-base" # Use a smaller audio encoder for tests
+text_encoder_model_name: "distilroberta-base"    # Use pre-downloaded text encoder
+
+# Overrides for training loop to make it quick
+num_epochs: 1
+# batch_size: 2 # Keep small for tiny dataset
+
+# These limits will be applied during data preparation and affect dataset loading
+limit_dialogues_train: 1 # Our dummy CSV has 1 dialogue with 2 utterances
+limit_dialogues_dev: 1   # For validation split, if used (dummy_dev_sent_emo.csv has 1 dialogue)
+limit_dialogues_test: 1  # For test split, if used
+
+# Data preparation flags
+run_mp4_to_wav_conversion: true # Set to true as we now have MP4s in tests/test_data/videos
+run_hf_dataset_creation: true    # We need HF datasets to be created from dummy CSV/WAVs
+
+# Architecture (main.py defaults to mlp_fusion if available)
+architecture_name: "mlp_fusion"
+
+# MLP Fusion specific parameters
+mlp_hidden_size: 256
+mlp_dropout_rate: 0.3
+
+# Ensure a small model for speed, if mlp_fusion_config allows these to be set
+# These are examples, refer to MLPFusionConfig for actual parameters
+# mlp_fusion_specific:
+#   hidden_dims: [64]
+#   dropout_rates: [0.1]
+#   activation: "relu"
+
+# Logging related (optional for test, but good practice)
+default_log_dir: "tests/test_outputs/logs"
+# log_level: "INFO"
+
+# Device: use CPU for tests to avoid GPU dependencies in basic CI
+device_name: "cpu"
+
+# Seed for reproducibility in tests
+random_seed: 123 

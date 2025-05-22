@@ -1,0 +1,49 @@
+---
+title: Simplified System Architecture
+---
+graph TD
+    %% Main Components
+    subgraph Input
+        A[Raw MELD Data]
+    end
+
+    subgraph Data_Preparation["Data Preparation"]
+        B[Download Script]
+        C[Data Processor]
+        D[Processed Dataset]
+        A --> B
+        B --> C
+        C --> D
+    end
+
+    subgraph Training
+        E[Trainer]
+        F[Model Architectures]
+        G[Checkpoints]
+        D --> E
+        F --> E
+        E --> G
+    end
+
+    subgraph Evaluation
+        H[Evaluator]
+        I[Metrics]
+        G --> H
+        H --> I
+    end
+
+    %% Styling
+    classDef input fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef process fill:#bbf,stroke:#333,stroke-width:2px;
+    classDef output fill:#bfb,stroke:#333,stroke-width:2px;
+    
+    class A input
+    class B,C,D,E,F process
+    class G,H,I output
+
+    %% Links
+    click B "https://github.com/yourusername/emotion-classification-dlfa/blob/main/scripts/download_meld_dataset.py" _blank
+    click C "https://github.com/yourusername/emotion-classification-dlfa/blob/main/utils/data_processor.py" _blank
+    click E "https://github.com/yourusername/emotion-classification-dlfa/blob/main/train.py" _blank
+    click F "https://github.com/yourusername/emotion-classification-dlfa/tree/main/models" _blank
+    click H "https://github.com/yourusername/emotion-classification-dlfa/blob/main/evaluate.py" _blank

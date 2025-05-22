@@ -1,0 +1,6 @@
+pytest>=6.0.0
+pytest-cov>=2.8.0
+pytest-mock>=3.3.1
+pytest-xdist>=2.1.0
+pytest-sugar>=0.9.4
+pytest-timeout>=1.4.2

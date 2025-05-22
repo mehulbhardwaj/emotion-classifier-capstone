@@ -1,0 +1,25 @@
+graph LR
+    subgraph "User Interaction"
+        CLI_User["User via CLI"]
+    end
+
+    subgraph "Core System"
+        MainPy["main.py CLI Orchestrator"]
+        Configs["YAML Configs & BaseConfig"]
+        Scripts["Data Processing Scripts<br/>(download, mp4_to_wav, build_hf_dataset, eda)"]
+        Architectures["Model Architectures<br/>(MLP, Teacher, Student)<br/>+ Trainers"]
+        Common["Common Utilities<br/>(MELDDataModule, utils, inference)"]
+        Data["MELD Data<br/>(Raw, Processed WAVs, HF Datasets)"]
+        ModelsDb["Saved Models"]
+    end
+
+    CLI_User -->|Runs| MainPy
+    MainPy -->|Loads| Configs
+    MainPy -->|Invokes| Scripts
+    MainPy -->|Instantiates & Uses| Architectures
+    MainPy -->|Uses| Common
+    Scripts -->|Processes/Creates| Data
+    Architectures -->|Trains/Evaluates/Uses| Data
+    Architectures -->|Saves/Loads| ModelsDb
+    Common -->|Accesses| Data
+``` 
