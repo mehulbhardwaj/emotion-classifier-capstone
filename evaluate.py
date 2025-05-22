@@ -57,8 +57,9 @@ def evaluate(model, data_module, config):
     trainer = pl.Trainer(
         accelerator="auto",
         devices=1,
-        logger=None,
-        enable_progress_bar=True
+        enable_progress_bar=True,
+        progress_bar_refresh_rate=1,
+        logger=None    
     )
     
     # Run test
