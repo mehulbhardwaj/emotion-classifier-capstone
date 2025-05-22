@@ -24,8 +24,7 @@ from utils.sampler import ClassBalancedSampler
 # ──────────────────────────────────────────────────────────────────────────────
 
 class MELDDataset(Dataset):
-    """Return dict with text, raw audio or pre‑extracted features, and label."""
-
+    """Return dict with text, raw audio or pre-extracted features, and label."""
     def __init__(
         self,
         hf_split,                  # 🤗 Dataset split
@@ -33,9 +32,9 @@ class MELDDataset(Dataset):
         audio_input_type: str = "raw_wav",  # or "hf_features"
         text_max_len: int = 128,
     ) -> None:
-        # alias the HF split under both names so DataModule and __getitem__ agree
-        self.hf_dataset = hf_split
+        # alias HF split so both .ds and .hf_dataset exist
         self.ds         = hf_split
+        self.hf_dataset = hf_split
 
         # tokenizer for text
         self.tokenizer        = AutoTokenizer.from_pretrained(text_encoder_name)
@@ -50,24 +49,27 @@ class MELDDataset(Dataset):
         out: Dict[str, Any] = {}
 
         # --- text ----------------------------------------------------------
-        toks = self.tok(
+        toks = self.tokenizer(
             row["text"],
             max_length=self.text_max_len,
             truncation=True,
             padding="max_length",
             return_tensors="pt",
         )
-        out["text_input_ids"] = toks["input_ids"].squeeze(0)
+        out["text_input_ids"]     = toks["input_ids"].squeeze(0)
         out["text_attention_mask"] = toks["attention_mask"].squeeze(0)
 
         # --- audio ---------------------------------------------------------
         if self.audio_input_type == "hf_features" and "audio_features" in row:
             out["audio_input_values"] = torch.tensor(row["audio_features"])
-        else:  # fallback to raw wav
-            wav, sr = self._safe_load_wav(row["audio_path"], fallback_sr=16000)
-            # normalise to ±1
+        else:
+            wav, sr = self._safe_load_wav(str(row["audio_path"]), fallback_sr=16000)
+            # down-mix to mono
+            if wav.size(0) > 1:
+                wav = wav.mean(0, keepdim=True)
+            # normalize
             wav = wav / wav.abs().max().clamp(min=1e-5)
-            out["raw_audio"] = wav
+            out["raw_audio"]     = wav
             out["sampling_rate"] = sr
 
         # --- label ---------------------------------------------------------
@@ -80,25 +82,28 @@ class MELDDataset(Dataset):
             wav, sr = torchaudio.load(path)
         except Exception:
             wav, sr = torch.zeros(1, fallback_sr), fallback_sr
-        # down‑mix stereo → mono
-        if wav.shape[0] > 1:
-            wav = wav.mean(0, keepdim=True)
         return wav, sr
 
-    # ---------------------------- collate_fn ------------------------------
     def collate_fn(self, batch):
         coll: Dict[str, Any] = {}
-        coll["text_input_ids"]     = torch.stack([b["text_input_ids"] for b in batch])
+
+        # text
+        coll["text_input_ids"]     = torch.stack([b["text_input_ids"]     for b in batch])
         coll["text_attention_mask"] = torch.stack([b["text_attention_mask"] for b in batch])
 
-        if "audio_input_values" in batch[0]:  # pre‑extracted features
+        # audio features or raw wav
+        if "audio_input_values" in batch[0]:
             feats = [b["audio_input_values"] for b in batch]
-            coll["audio_input_values"] = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True)
-            coll["audio_attention_mask"] = (coll["audio_input_values"].abs().sum(-1) != 0).long()
-        else:  # raw wav
+            padded = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True, padding_value=0.0)
+            coll["audio_input_values"]   = padded
+            coll["audio_attention_mask"] = (padded.abs().sum(-1) != 0).long()
+        else:
             wavs = [b["raw_audio"].squeeze(0) for b in batch]
-            coll["raw_audio"] = wavs
-            coll["sampling_rate"] = batch[0]["sampling_rate"]
+            # leave as list for faster shuffling, we’ll pad later
+            coll["raw_audio"]      = wavs
+            coll["sampling_rate"]  = batch[0]["sampling_rate"]
+
+        # labels
         coll["labels"] = torch.stack([b["labels"] for b in batch])
         return coll
 
@@ -108,10 +113,9 @@ class MELDDataset(Dataset):
 
 class MELDDataModule(pl.LightningDataModule):
     """Outputs (wav, wav_mask, txt, txt_mask, labels) for all splits."""
-
     def __init__(self, config):
         super().__init__()
-        self.cfg = config
+        self.cfg: Any = config
         self.datasets: Dict[str, MELDDataset] = {}
         self._current_split: str | None = None
 
@@ -125,40 +129,37 @@ class MELDDataModule(pl.LightningDataModule):
                 hf_ds,
                 self.cfg.text_encoder_model_name,
                 self.cfg.audio_input_type,
+                text_max_len=self.cfg.get("text_max_len", 128),
             )
 
-    # ---------------- unified collate → 5‑tuple ---------------------------
     def _to_5tuple(self, raw):
         txt, txt_mask, labels = raw["text_input_ids"], raw["text_attention_mask"], raw["labels"]
         if "audio_input_values" in raw:
-            wav = raw["audio_input_values"]
-            wav_mask = raw["audio_attention_mask"]
+            wav, wav_mask = raw["audio_input_values"], raw["audio_attention_mask"]
         else:
-            wavs = [a.squeeze(0) for a in raw["raw_audio"]]
+            wavs = [w.unsqueeze(0) if w.ndim==1 else w for w in raw["raw_audio"]]
             wav = torch.nn.utils.rnn.pad_sequence(wavs, batch_first=True, padding_value=0.0)
-            #wav_mask = (wav.abs().sum(-1) != 0).long()
-            wav_mask = (wav != 0.0).long()
+            wav_mask = (wav.abs().sum(-1) != 0).long()
         return wav, wav_mask, txt, txt_mask, labels
 
     def _loader(self, split: str, shuffle: bool):
         ds = self.datasets[split]
 
         if split == "train":
-            # pull the raw labels out of the underlying HF-split (or your wrapped dataset)
             labels = torch.tensor(ds.hf_dataset["label"])
             sampler = ClassBalancedSampler(labels)
             shuffle = False
         else:
             sampler = None
-            shuffle = False
-      
+
         return DataLoader(
             ds,
             batch_size=self.cfg.batch_size,
+            sampler=sampler,
             shuffle=shuffle,
             num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
             pin_memory=True,
-            collate_fn=lambda batch: self._to_5tuple(ds.collate_fn(batch)),
+            collate_fn=lambda b: self._to_5tuple(ds.collate_fn(b)),
         )
 
     def train_dataloader(self):
@@ -172,7 +173,7 @@ class MELDDataModule(pl.LightningDataModule):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 3. Functions to download the MELD dataset from HF
+# 3. Utility functions to download the MELD dataset from HF
 # ──────────────────────────────────────────────────────────────────────────────
 
 def download_meld_dataset(data_dir: Path):
