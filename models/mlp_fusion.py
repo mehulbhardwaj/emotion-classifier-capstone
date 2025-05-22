@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 from pytorch_lightning import LightningModule
 from transformers import Wav2Vec2Model, RobertaModel
-
+from torchmetrics.classification import MulticlassF1Score
 
 class MultimodalFusionMLP(LightningModule):
     """Wav2Vec2 + RoBERTa → feature concat → MLP classifier.
@@ -24,7 +24,7 @@ class MultimodalFusionMLP(LightningModule):
     def __init__(self, config, **kwargs):
         super().__init__()
         self.config = config
-
+        self.val_f1 = MulticlassF1Score(num_classes=config.output_dim, average="macro")
         # ------------------------------------------------------------------
         # 1) Encoders
         # ------------------------------------------------------------------
@@ -101,8 +101,16 @@ class MultimodalFusionMLP(LightningModule):
         loss = self.criterion(logits, labels)
         preds = torch.argmax(logits, dim=-1)
         acc = (preds == labels).float().mean()
-        self.log_dict({'val_loss': loss, 'val_acc': acc}, prog_bar=True)
+        self.val_f1.update(preds, labels)
+        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_acc", (preds == labels).float().mean(), prog_bar=True)
+        #self.log_dict({'val_loss': loss, 'val_acc': acc}, prog_bar=True)
         return {'preds': preds, 'targets': labels}
+
+    def on_validation_epoch_end(self):
+        f1 = self.val_f1.compute()
+        self.log("val_f1", f1, prog_bar=True)
+        self.val_f1.reset()
 
     def configure_optimizers(self):
         # Base LR from config
