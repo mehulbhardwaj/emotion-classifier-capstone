@@ -3,6 +3,7 @@
 A simplified implementation that fuses audio and text features using a simple MLP.
 """
 
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -16,7 +17,7 @@ class MultimodalFusionMLP(LightningModule):
     Supports:
     1. Class-imbalance weights via `config.class_weights`.
     2. Optional fine-tuning of last *N* transformer blocks via `config.fine_tune`.
-    3. CosineAnnealingLR scheduler from YAML.
+    3. CosineAnnealingLR scheduler over epochs.
     4. Adjustable MLP hidden size via config.mlp_hidden_size.
     """
 
@@ -34,7 +35,7 @@ class MultimodalFusionMLP(LightningModule):
         for p in self.audio_encoder.parameters(): p.requires_grad = False
         for p in self.text_encoder.parameters():  p.requires_grad = False
 
-        # If fine_tune section exists in config, unfreeze top-N layers and set lr multipliers
+        # Optional fine-tuning: unfreeze top-N and set LR multipliers
         if hasattr(self.config, 'fine_tune'):
             n_audio = getattr(self.config.fine_tune.audio_encoder, 'unfreeze_top_n_layers', 0)
             n_text  = getattr(self.config.fine_tune.text_encoder, 'unfreeze_top_n_layers', 0)
@@ -43,7 +44,6 @@ class MultimodalFusionMLP(LightningModule):
             self.audio_lr_mul = float(getattr(self.config.fine_tune.audio_encoder, 'lr_mul', 1.0))
             self.text_lr_mul  = float(getattr(self.config.fine_tune.text_encoder, 'lr_mul', 1.0))
         else:
-            # Defaults: no fine-tuning, no lr multiplier
             self.audio_lr_mul = 0.0
             self.text_lr_mul  = 0.0
 
@@ -105,21 +105,36 @@ class MultimodalFusionMLP(LightningModule):
         return {'preds': preds, 'targets': labels}
 
     def configure_optimizers(self):
-        lr = float(self.config.optimizer.lr)
-        wd = float(self.config.optimizer.weight_decay)
+        # Base LR from config
+        base_lr = float(self.config.learning_rate)
+        # Weight decay, default if missing
+        wd = float(getattr(self.config, 'weight_decay', 1e-4))
 
         # Build parameter groups
         params = []
         if self.audio_lr_mul > 0:
-            params.append({'params': [p for p in self.audio_encoder.parameters() if p.requires_grad], 'lr': lr * self.audio_lr_mul})
+            params.append({
+                'params': [p for p in self.audio_encoder.parameters() if p.requires_grad],
+                'lr': base_lr * self.audio_lr_mul,
+            })
         if self.text_lr_mul > 0:
-            params.append({'params': [p for p in self.text_encoder.parameters() if p.requires_grad], 'lr': lr * self.text_lr_mul})
-        params.append({'params': self.fusion_mlp.parameters(), 'lr': lr})
+            params.append({
+                'params': [p for p in self.text_encoder.parameters() if p.requires_grad],
+                'lr': base_lr * self.text_lr_mul,
+            })
+        params.append({
+            'params': self.fusion_mlp.parameters(),
+            'lr': base_lr,
+        })
 
         optimizer = optim.AdamW(params, weight_decay=wd)
+
+        # Cosine scheduler over epochs
+        t_max = int(self.config.num_epochs)
+        eta  = float(getattr(self.config, 'eta_min', 1e-7))
         scheduler = optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=int(self.config.scheduler.T_max),
-            eta_min=float(self.config.scheduler.eta_min),
+            T_max=t_max,
+            eta_min=eta,
         )
         return [optimizer], [scheduler]
