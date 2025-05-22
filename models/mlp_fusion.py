@@ -248,10 +248,26 @@ class MultimodalFusionMLP(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        """Configure optimizer."""
-        # Only optimize parameters that require gradients
+        """Configure optimizer and cosine scheduler."""
+        # 1) Cast hyperparams from config into floats/ints
+        lr = float(self.config.optimizer.lr)
+        wd = float(self.config.optimizer.weight_decay)
+
+        # 2) Build AdamW over all trainable params
         optimizer = optim.AdamW(
             filter(lambda p: p.requires_grad, self.parameters()),
-            lr=self.learning_rate
+            lr=lr,
+            weight_decay=wd,
         )
-        return optimizer
+
+        # 3) Cosine annealing scheduler
+        t_max   = int(self.config.scheduler.T_max)
+        eta_min = float(self.config.scheduler.eta_min)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=t_max,
+            eta_min=eta_min,
+        )
+
+        # 4) Return both in the Lightning format
+        return [optimizer], [scheduler]
