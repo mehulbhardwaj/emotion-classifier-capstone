@@ -48,19 +48,7 @@ def train(config):
     
     # Create the model based on architecture name
     if config.architecture_name == "mlp_fusion":
-        model = MultimodalFusionMLP(
-            mlp_hidden_size=config.mlp_hidden_size,
-            mlp_dropout_rate=config.mlp_dropout_rate,
-            text_encoder_model_name=config.text_encoder_model_name,
-            audio_encoder_model_name=config.audio_encoder_model_name,
-            text_feature_dim=config.text_feature_dim,
-            audio_feature_dim=config.audio_feature_dim,
-            freeze_text_encoder=config.freeze_text_encoder,
-            freeze_audio_encoder=config.freeze_audio_encoder,
-            audio_input_type=config.audio_input_type,
-            output_dim=config.output_dim,
-            learning_rate=config.learning_rate
-        )
+        model = MultimodalFusionMLP(config)
     elif config.architecture_name == "teacher":
         model = TeacherTransformer(
             hidden_size=getattr(config, "hidden_size", 256),
