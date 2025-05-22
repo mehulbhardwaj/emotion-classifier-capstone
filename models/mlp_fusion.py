@@ -7,10 +7,26 @@ A simplified implementation that fuses audio and text features using a simple ML
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from pytorch_lightning import LightningModule
 from transformers import Wav2Vec2Model, RobertaModel
 from torchmetrics.classification import MulticlassF1Score
 
+def focal_loss(logits: torch.FloatTensor,
+               targets: torch.LongTensor,
+               alpha: torch.FloatTensor,
+               gamma: float = 2.0) -> torch.FloatTensor:
+    """
+    logits: (B, C)
+    targets: (B,)
+    alpha:   (C,) per-class weighting
+    """
+    # standard cross‐entropy without reduction
+    ce = F.cross_entropy(logits, targets, reduction="none", weight=alpha)
+    # pt = exp(-ce) gives the model’s estimated probability for the true class
+    pt = torch.exp(-ce)
+    return ((1 - pt) ** gamma * ce).mean()
+                   
 class MultimodalFusionMLP(LightningModule):
     """Wav2Vec2 + RoBERTa → feature concat → MLP classifier.
 
@@ -65,14 +81,18 @@ class MultimodalFusionMLP(LightningModule):
         )
 
         # ------------------------------------------------------------------
-        # 3) Loss with class weights
+        # 3) Loss with class weights - move to focal loss from cross-entropy loss
         # ------------------------------------------------------------------
         if hasattr(self.config, 'class_weights'):
-            w = torch.tensor(self.config.class_weights, dtype=torch.float)
-            self.register_buffer('class_weights', w)
-            self.criterion = nn.CrossEntropyLoss(weight=self.class_weights)
+            alpha = torch.tensor(config.class_weights, dtype=torch.float)
+            self.register_buffer("alpha", alpha)
+            
+            #w = torch.tensor(self.config.class_weights, dtype=torch.float)
+            #self.register_buffer('class_weights', w)
+            #self.criterion = nn.CrossEntropyLoss(weight=self.class_weights)
         else:
-            self.criterion = nn.CrossEntropyLoss()
+            self.register_buffer("alpha", torch.ones(config.output_dim, dtype=torch.float))
+            #self.criterion = nn.CrossEntropyLoss()
 
     @staticmethod
     def _unfreeze_top_n_layers(layer_list, n_layers: int):
@@ -95,17 +115,20 @@ class MultimodalFusionMLP(LightningModule):
     def training_step(self, batch, batch_idx):
         wav, wav_mask, txt, txt_mask, labels = batch
         logits = self(wav, wav_mask, txt, txt_mask)
-        loss = self.criterion(logits, labels)
+        loss = focal_loss(logits, labels, alpha=self.alpha, gamma=getattr(self.config, "focal_gamma", 2.0))
+        #loss = self.criterion(logits, labels)
         self.log('train_loss', loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         wav, wav_mask, txt, txt_mask, labels = batch
         logits = self(wav, wav_mask, txt, txt_mask)
-        loss = self.criterion(logits, labels)
+        loss = focal_loss(logits, labels, alpha=self.alpha, gamma=getattr(self.config, "focal_gamma", 2.0))
+        #loss = self.criterion(logits, labels)
         preds = torch.argmax(logits, dim=-1)
         acc = (preds == labels).float().mean()
         self.val_f1.update(preds, labels)
+        
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_acc", (preds == labels).float().mean(), prog_bar=True)
         #self.log_dict({'val_loss': loss, 'val_acc': acc}, prog_bar=True)
