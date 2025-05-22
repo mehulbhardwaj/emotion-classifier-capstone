@@ -25,6 +25,7 @@ class MultimodalFusionMLP(LightningModule):
         super().__init__()
         self.config = config
         self.val_f1 = MulticlassF1Score(num_classes=config.output_dim, average="macro")
+        self.test_f1 = MulticlassF1Score(num_classes=self.config.output_dim, average="macro")
         # ------------------------------------------------------------------
         # 1) Encoders
         # ------------------------------------------------------------------
@@ -112,6 +113,22 @@ class MultimodalFusionMLP(LightningModule):
         self.log("val_f1", f1, prog_bar=True)
         self.val_f1.reset()
 
+    def test_step(self, batch, batch_idx):
+    wav, wav_mask, txt, txt_mask, labels = batch
+    logits = self(wav, wav_mask, txt, txt_mask)
+    loss = self.criterion(logits, labels)
+    preds = logits.argmax(dim=-1)
+    acc  = (preds == labels).float().mean()
+    self.log("test_loss", loss)
+    self.log("test_acc",  acc)
+    self.test_f1.update(preds, labels)
+    return {"preds": preds, "targets": labels}
+
+    def on_test_epoch_end(self):
+        f1 = self.test_f1.compute()
+        self.log("test_f1", f1)
+        self.test_f1.reset()
+    
     def configure_optimizers(self):
         # Base LR from config
         base_lr = float(self.config.learning_rate)
