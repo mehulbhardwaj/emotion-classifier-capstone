@@ -15,9 +15,9 @@ import torch
 import torchaudio
 import datasets as hf
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from transformers import AutoTokenizer
-from utils.sampler import ClassBalancedSampler
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1.  MELDDataset (lean but robust)
@@ -139,19 +139,29 @@ class MELDDataModule(pl.LightningDataModule):
 
     def _loader(self, split: str, shuffle: bool):
         ds = self.datasets[split]
+
         if split == "train":
+            # pull the raw labels out of the underlying HF-split
             labels = torch.tensor(ds.hf_dataset["label"])
-            sampler = ClassBalancedSampler(labels)
+            # compute per-class weights: inverse of freq
+            class_counts  = torch.bincount(labels, minlength=self.cfg.output_dim)
+            class_weights = 1.0 / class_counts.float()
+            # per-sample weights
+            sample_weights = class_weights[labels]
+            sampler = WeightedRandomSampler(
+                weights=sample_weights,
+                num_samples=len(sample_weights),
+                replacement=True
+            )
             shuffle = False
         else:
-            sampler = None
-            shuffle = False
+            sampler, shuffle = None, False
 
         return DataLoader(
             ds,
             batch_size=self.cfg.batch_size,
-            shuffle=shuffle,
             sampler=sampler,
+            shuffle=shuffle,
             num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
             pin_memory=True,
             collate_fn=lambda batch: self._to_5tuple(ds.collate_fn(batch)),
