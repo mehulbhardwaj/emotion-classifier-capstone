@@ -6,8 +6,6 @@ A simplified implementation that fuses audio and text features using a simple ML
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_sequence
 from pytorch_lightning import LightningModule
 from transformers import Wav2Vec2Model, RobertaModel
 
@@ -19,18 +17,11 @@ class MultimodalFusionMLP(LightningModule):
     1. Class-imbalance weights via `config.class_weights`.
     2. Partial fine-tuning of the last *N* transformer blocks with an LR multiplier.
     3. CosineAnnealingLR scheduler configured from YAML.
-    4. Adjustable MLP hidden size via `mlp_hidden_size` hyperparameter.
+    4. Adjustable MLP hidden size via config.mlp_hidden_size.
     """
 
-    def __init__(
-        self,
-        config,
-        mlp_hidden_size: int = 512,
-        **kwargs,
-    ):
+    def __init__(self, config, **kwargs):
         super().__init__()
-        # Save all hyperparams except config
-        self.save_hyperparameters("mlp_hidden_size")
         self.config = config
 
         # ------------------------------------------------------------------
@@ -46,29 +37,25 @@ class MultimodalFusionMLP(LightningModule):
             p.requires_grad = False
 
         # Unfreeze top-N
-        self._unfreeze_top_n_layers(
-            self.audio_encoder.encoder.layers,
-            n_layers=self.config.fine_tune.audio_encoder.unfreeze_top_n_layers,
-        )
-        self._unfreeze_top_n_layers(
-            self.text_encoder.encoder.layer,
-            n_layers=self.config.fine_tune.text_encoder.unfreeze_top_n_layers,
-        )
+        n_audio = getattr(self.config.fine_tune.audio_encoder, 'unfreeze_top_n_layers', 0)
+        n_text  = getattr(self.config.fine_tune.text_encoder, 'unfreeze_top_n_layers', 0)
+        self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, n_audio)
+        self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, n_text)
 
         # Store LR multipliers
-        self.audio_lr_mul = float(self.config.fine_tune.audio_encoder.lr_mul)
-        self.text_lr_mul  = float(self.config.fine_tune.text_encoder.lr_mul)
+        self.audio_lr_mul = float(getattr(self.config.fine_tune.audio_encoder, 'lr_mul', 1.0))
+        self.text_lr_mul  = float(getattr(self.config.fine_tune.text_encoder, 'lr_mul', 1.0))
 
         # ------------------------------------------------------------------
         # 2) Fusion head with adjustable hidden size
         # ------------------------------------------------------------------
         hidden_dim = self.audio_encoder.config.hidden_size + self.text_encoder.config.hidden_size
-        hidden_size = mlp_hidden_size
+        mlp_hidden = getattr(self.config, 'mlp_hidden_size', 512)
         self.fusion_mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_size),
+            nn.Linear(hidden_dim, mlp_hidden),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(hidden_size, self.config.class_weights.size(0) if hasattr(self.config, 'class_weights') else 7),
+            nn.Linear(mlp_hidden, len(self.config.class_weights)),
         )
 
         # ------------------------------------------------------------------
@@ -89,13 +76,11 @@ class MultimodalFusionMLP(LightningModule):
 
     def forward(self, wav_inputs, wav_attention, text_inputs, text_attention):
         # Audio embedding (mean pooling)
-        a_out = self.audio_encoder(input_values=wav_inputs,
-                                   attention_mask=wav_attention).last_hidden_state
+        a_out = self.audio_encoder(input_values=wav_inputs, attention_mask=wav_attention).last_hidden_state
         a_emb = a_out.mean(dim=1)
 
         # Text embedding (CLS token)
-        t_out = self.text_encoder(input_ids=text_inputs,
-                                  attention_mask=text_attention).last_hidden_state
+        t_out = self.text_encoder(input_ids=text_inputs, attention_mask=text_attention).last_hidden_state
         t_emb = t_out[:, 0, :]
 
         # Concatenate and classify
@@ -124,29 +109,16 @@ class MultimodalFusionMLP(LightningModule):
         wd      = float(self.config.optimizer.weight_decay)
 
         # Param groups with per-encoder LR multipliers
-        audio_params = {
-            "params": [p for p in self.audio_encoder.parameters() if p.requires_grad],
-            "lr": base_lr * self.audio_lr_mul,
-        }
-        text_params = {
-            "params": [p for p in self.text_encoder.parameters() if p.requires_grad],
-            "lr": base_lr * self.text_lr_mul,
-        }
-        other_params = {
-            "params": [p for p in self.fusion_mlp.parameters()],
-            "lr": base_lr,
-        }
+        audio_params = {"params": [p for p in self.audio_encoder.parameters() if p.requires_grad],
+                        "lr": base_lr * self.audio_lr_mul}
+        text_params  = {"params": [p for p in self.text_encoder.parameters() if p.requires_grad],
+                        "lr": base_lr * self.text_lr_mul}
+        other_params = {"params": self.fusion_mlp.parameters(), "lr": base_lr}
 
-        optimizer = optim.AdamW([
-            audio_params,
-            text_params,
-            other_params,
-        ], weight_decay=wd)
-
+        optimizer = optim.AdamW([audio_params, text_params, other_params], weight_decay=wd)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
             T_max=int(self.config.scheduler.T_max),
             eta_min=float(self.config.scheduler.eta_min),
         )
-
         return [optimizer], [scheduler]
