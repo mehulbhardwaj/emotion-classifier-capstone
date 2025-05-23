@@ -191,6 +191,12 @@ class DialogRNNMLP(LightningModule):
         labels = batch["labels"]
 
         logits = self(batch)
+        
+        # If context window was applied in forward(), we need to truncate mask and labels too
+        if self.context_window > 0 and mask.shape[1] > self.context_window and logits.shape[1] == self.context_window:
+            mask = mask[:, -self.context_window:]
+            labels = labels[:, -self.context_window:]
+        
         logits_flat = logits[mask]
         labels_flat = labels[mask]
 

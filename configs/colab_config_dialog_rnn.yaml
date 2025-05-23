@@ -46,7 +46,4 @@ grad_accumulation_steps: 1
 dataloader_num_workers: 2
 
 # Additional settings retained from Hydra config
-mlp_dropout_rate: 0.3
-
-# Output Directories (will be created automatically)
-output_dir: "/content/emotion-classifier-capstone/output" 
+mlp_dropout_rate: 0.3 
