@@ -62,52 +62,58 @@ class DialogRNNMLP(LightningModule):
         self.config = config
         self.save_hyperparameters(ignore=["config"])
 
-        # ---------------- constants from cfg ----------------
-        self.num_classes: int = int(getattr(config, "output_dim", 7))
-        self.hidden_gru: int = int(getattr(config, "gru_hidden_size", 128))
-        self.context_window: int = int(getattr(config, "context_window", 0))
+        # constants
+        self.num_classes    = int(getattr(config, "output_dim", 7))
+        self.hidden_gru     = int(getattr(config, "gru_hidden_size", 128))
+        self.context_window = int(getattr(config, "context_window", 0))
+        self.bidirectional  = True
+        self.num_directions = 2 if self.bidirectional else 1
 
-        # ---------------- encoders --------------------------
-        self.audio_encoder: Wav2Vec2Model = Wav2Vec2Model.from_pretrained(
-            "facebook/wav2vec2-base-960h"
-        )
-        self.text_encoder: RobertaModel = RobertaModel.from_pretrained("roberta-base")
-
-        # Freeze all layers — we may selectively unfreeze below
-        for p in self.audio_encoder.parameters():
-            p.requires_grad = False
-        for p in self.text_encoder.parameters():
-            p.requires_grad = False
-
-        # Optional partial unfreeze
-        self.audio_lr_mul, self.text_lr_mul = 0.0, 0.0
+        # encoders (frozen / optional unfreeze)
+        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        self.text_encoder  = RobertaModel.from_pretrained("roberta-base")
+        for p in self.audio_encoder.parameters(): p.requires_grad = False
+        for p in self.text_encoder.parameters():  p.requires_grad = False
         if hasattr(config, "fine_tune"):
-            n_audio = int(getattr(config.fine_tune.audio_encoder, "unfreeze_top_n_layers", 0))
-            n_text = int(getattr(config.fine_tune.text_encoder, "unfreeze_top_n_layers", 0))
-            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, n_audio)
-            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, n_text)
-            self.audio_lr_mul = float(getattr(config.fine_tune.audio_encoder, "lr_mul", 1.0))
-            self.text_lr_mul = float(getattr(config.fine_tune.text_encoder, "lr_mul", 1.0))
+            na = int(config.fine_tune.audio_encoder.unfreeze_top_n_layers)
+            nt = int(config.fine_tune.text_encoder.unfreeze_top_n_layers)
+            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, na)
+            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, nt)
+            self.audio_lr_mul = float(config.fine_tune.audio_encoder.lr_mul)
+            self.text_lr_mul  = float(config.fine_tune.text_encoder.lr_mul)
+        else:
+            self.audio_lr_mul = self.text_lr_mul = 0.0
 
-        # Dimensionalities --------------------------------------------------
-        self.enc_dim: int = (
-            self.audio_encoder.config.hidden_size + self.text_encoder.config.hidden_size
+        # dimensionalities
+        self.enc_dim = (
+            self.audio_encoder.config.hidden_size
+          + self.text_encoder.config.hidden_size
         )
 
-        # Context GRUs ------------------------------------------------------
-        self.gru_global = nn.GRU(self.enc_dim, self.hidden_gru, batch_first=True)
-        self.gru_speaker = nn.GRU(self.enc_dim, self.hidden_gru, batch_first=True)
-        self.gru_emotion = nn.GRU(self.enc_dim, self.hidden_gru, batch_first=True)
+        # 2-layer bidirectional GRUs
+        self.gru_global  = nn.GRU(self.enc_dim, self.hidden_gru,
+                                  num_layers=2, batch_first=True,
+                                  bidirectional=self.bidirectional)
+        self.gru_speaker = nn.GRU(self.enc_dim, self.hidden_gru,
+                                  num_layers=2, batch_first=True,
+                                  bidirectional=self.bidirectional)
+        self.gru_emotion = nn.GRU(self.enc_dim, self.hidden_gru,
+                                  num_layers=2, batch_first=True,
+                                  bidirectional=self.bidirectional)
 
-        # Classification head ----------------------------------------------
-        mlp_hidden = int(getattr(config, "mlp_hidden_size", 512))
+        # compute total hidden dim: enc_dim + 3 * (hidden_gru * num_directions)
+        total_dim = self.enc_dim + 3 * (self.hidden_gru * self.num_directions)
+
+        # LayerNorm over the time-step representations
+        self.layer_norm = nn.LayerNorm(total_dim)
+
+        # classification head (same depth, bigger MLP)
+        mlp_hidden = int(getattr(config, "mlp_hidden_size", 2048))
         self.classifier = nn.Sequential(
-            nn.Linear(self.enc_dim + 3 * self.hidden_gru, mlp_hidden),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(mlp_hidden, mlp_hidden // 2),
-            nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Linear(total_dim,      mlp_hidden),
+            nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(mlp_hidden,     mlp_hidden // 2),
+            nn.ReLU(), nn.Dropout(0.3),
             nn.Linear(mlp_hidden // 2, self.num_classes),
         )
 
@@ -149,34 +155,32 @@ class DialogRNNMLP(LightningModule):
     def forward(self, batch: Dict[str, torch.Tensor]) -> torch.FloatTensor:
         wav, wav_mask = batch["wav"], batch["wav_mask"]
         txt, txt_mask = batch["txt"], batch["txt_mask"]
-        speaker_id = batch["speaker_id"]
+        speaker_id    = batch["speaker_id"]
 
         B, T, _ = wav.shape
+        # encode each utterance
+        a = self.audio_encoder(input_values=wav.flatten(0,1),
+                               attention_mask=wav_mask.flatten(0,1)
+                              ).last_hidden_state[:,0]
+        t = self.text_encoder(input_ids=txt.flatten(0,1),
+                              attention_mask=txt_mask.flatten(0,1)
+                             ).last_hidden_state[:,0]
+        u = torch.cat([a,t], dim=-1).view(B, T, -1)
 
-        # Flatten utterances → run encoders → CLS embeddings
-        a_emb = self.audio_encoder(
-            input_values=wav.flatten(0, 1),
-            attention_mask=wav_mask.flatten(0, 1),
-        ).last_hidden_state[:, 0, :]
-        t_emb = self.text_encoder(
-            input_ids=txt.flatten(0, 1),
-            attention_mask=txt_mask.flatten(0, 1),
-        ).last_hidden_state[:, 0, :]
-        u = torch.cat([a_emb, t_emb], dim=-1).view(B, T, -1)  # (B,T,D)
+        # optional context window
+        if self.context_window>0 and T>self.context_window:
+            u = u[:,-self.context_window:,:]
+            speaker_id = speaker_id[:,-self.context_window:]
 
-        # Truncate history if context_window > 0
-        if self.context_window > 0 and T > self.context_window:
-            u = u[:, -self.context_window :, :]
-            speaker_id = speaker_id[:, -self.context_window :]
-
-        # GRU context
+        # run all three GRUs
         g_out, _ = self.gru_global(u)
-        s_inp = self._mask_same_speaker(u, speaker_id)
-        s_out, _ = self.gru_speaker(s_inp)
+        s_out, _ = self.gru_speaker(self._mask_same_speaker(u, speaker_id))
         e_out, _ = self.gru_emotion(u)
 
-        h = torch.cat([u, g_out, s_out, e_out], dim=-1)
-        logits = self.classifier(h)  # (B,T,C)
+        # concat + norm + classify
+        h = torch.cat([u, g_out, s_out, e_out], dim=-1)  # (B,T,total_dim)
+        h = self.layer_norm(h)
+        logits = self.classifier(h)                    # (B,T,C)
         return logits
 
     # ------------------------------------------------------------------
