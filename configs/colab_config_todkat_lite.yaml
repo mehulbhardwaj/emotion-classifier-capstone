@@ -13,13 +13,14 @@ data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
 
 # Model architecture settings
 output_dim: 7
-topic_embedding_dim: 128
+topic_embedding_dim: 32
 n_topics: 50
-rel_transformer_layers: 2
+rel_transformer_layers: 1
 rel_heads: 4
 mlp_hidden_size: 512
 mlp_dropout_rate: 0.3
 use_knowledge: true
+knowledge_dim: 16
 
 # Encoder settings
 text_encoder_model_name: roberta-base

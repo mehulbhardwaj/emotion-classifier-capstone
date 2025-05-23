@@ -62,7 +62,7 @@ class TodkatLiteMLP(LightningModule):
         self.num_classes: int = int(getattr(config, "output_dim", 7))
         self.topic_dim: int = int(getattr(config, "topic_embedding_dim", 100))
         self.use_knowledge: bool = bool(getattr(config, "use_knowledge", False))
-        self.kn_dim: int = 64 if self.use_knowledge else 0
+        self.kn_dim: int = int(getattr(config, "knowledge_dim", 16)) if self.use_knowledge else 0
 
         # ----- encoders (frozen) -----
         self.audio_encoder: Wav2Vec2Model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
@@ -98,7 +98,7 @@ class TodkatLiteMLP(LightningModule):
             nn.TransformerEncoderLayer(
                 d_model=self.d_model,
                 nhead=n_heads,
-                dim_feedforward=256,
+                dim_feedforward=128,
                 dropout=0.1,
                 batch_first=True,
             ),

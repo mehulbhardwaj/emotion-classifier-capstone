@@ -21,20 +21,20 @@ mlp_hidden_size: 2048
 text_encoder_model_name: roberta-base
 audio_encoder_model_name: facebook/wav2vec2-base-960h
 audio_input_type: raw_wav
-freeze_text_encoder: false  # Allow fine-tuning
-freeze_audio_encoder: false  # Allow fine-tuning
+freeze_text_encoder: true   # FIXED: Keep frozen for stability
+freeze_audio_encoder: true  # FIXED: Keep frozen for stability
 
 # Training settings
 batch_size: 8
 num_epochs: 30
-learning_rate: 1e-5
+learning_rate: 1e-4  # FIXED: Increased from 1e-5 to match MLP baseline
 weight_decay: 1e-4
 optimizer_name: AdamW
 
 # Loss settings
-focal_gamma: 2.0
+focal_gamma: 1.0  # FIXED: Reduced from 2.0 for less aggressive focusing
 
-# Class weights for MELD emotion imbalance
+# Class weights for MELD emotion imbalance (kept same for fair comparison)
 class_weights: [1.62, 8.22, 11.19, 1.40, 0.45, 2.69, 2.00]
 
 # Training options
