@@ -1,22 +1,22 @@
-# TOD-KAT Lite Config - Optimized for 7.5M Parameters
-# ===================================================
+# TOD-KAT Lite Config - Fair Comparison (50 Epochs, Standardized Settings)
+# =======================================================================
 
 # CRITICAL: Architecture selection
 architecture_name: todkat_lite
 
 # Experiment settings
-experiment_name: colab_run_todkat_lite_optimal
+experiment_name: colab_run_todkat_lite_fair_comparison
 random_seed: 42
 
 # Data paths
 data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
 
-# Model architecture settings - SIMPLIFIED FOR DEBUGGING  
+# Model architecture settings
 output_dim: 7
 topic_embedding_dim: 64      
 n_topics: 64                 
-rel_transformer_layers: 2    # REDUCED: for debugging
-rel_heads: 4                 # REDUCED: for debugging  
+rel_transformer_layers: 2    
+rel_heads: 4                 
 projection_dim: 256          
 mlp_hidden_size: 1024        
 mlp_dropout_rate: 0.3
@@ -24,23 +24,33 @@ use_knowledge: true
 knowledge_dim: 32            
 
 # TOD-KAT Specific Features
-use_topic_mlps: true          # ENABLED: Add topic MLPs (fₙᵤ, fₛ) for +2.4M params
-use_knowledge_attention: false # Keep disabled for now
+use_topic_mlps: true          # ENABLED: Add topic MLPs for ~7.6M params
+use_knowledge_attention: false 
 transformer_dim_feedforward: 512
 
-# Encoder settings
+# Encoder settings - FAIR COMPARISON
 text_encoder_model_name: roberta-base
 audio_encoder_model_name: facebook/wav2vec2-base-960h
 audio_input_type: raw_wav
-freeze_text_encoder: true
-freeze_audio_encoder: true
+freeze_text_encoder: false     # UNFROZEN: for fair comparison
+freeze_audio_encoder: false    # UNFROZEN: for fair comparison
 
-# Training settings
-batch_size: 8
-num_epochs: 25
-learning_rate: 1e-4
+# Fine-tuning settings - STANDARDIZED for all models
+fine_tune:
+  audio_encoder:
+    unfreeze_top_n_layers: 12
+    lr_mul: 1.5
+  text_encoder:
+    unfreeze_top_n_layers: 12
+    lr_mul: 1.5
+
+# Training settings - STANDARDIZED
+batch_size: 8                   # Consistent across models
+num_epochs: 50                  
+learning_rate: 2e-5             # Conservative for unfrozen encoders
 weight_decay: 1e-4
 optimizer_name: AdamW
+gradient_clip_val: 0.5          # Conservative for stability
 
 # Loss settings
 focal_gamma: 2.0
@@ -50,7 +60,7 @@ class_weights: [1.62, 8.22, 11.19, 1.40, 0.45, 2.69, 2.00]
 
 # Training options
 use_mixed_precision: true
-early_stopping_patience: 5
+early_stopping_patience: 10   
 grad_accumulation_steps: 1
 
 # DataLoader settings
