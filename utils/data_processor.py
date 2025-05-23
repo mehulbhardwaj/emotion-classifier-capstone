@@ -25,6 +25,8 @@ import pytorch_lightning as pl
 from datasets import load_from_disk
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from transformers import AutoTokenizer
+from transformers import AutoTokenizer
+
 
 ################################################################################
 # small util (needed by helper funcs at end) -----------------------------------
@@ -146,6 +148,33 @@ class MELDDataModule(pl.LightningDataModule):
         return wav, wmsk, txt, tmsk, lab
 
     # ------------------------------------------------------------------
+    # 2.1-bis: helper to build 7- / 8-tuple from per-dialog buckets
+    # ------------------------------------------------------------------
+    def _pack_dialog(self, bucket: List[Dict[str,Any]]):
+        """
+        Returns:
+          wav, wav_mask, txt, txt_mask, labels, speaker_id, dialog_mask
+        Extra fields (topic_id, kn_vec) are added later for TOD-KAT.
+        """
+        T        = len(bucket)
+        # ---------- audio ----------
+        if "audio_input_values" in bucket[0]:
+            a = torch.nn.utils.rnn.pad_sequence(
+                    [u["audio_input_values"] for u in bucket], batch_first=True)
+            m = (a.abs().sum(-1) != 0).long()
+        else:
+            raw = [u["raw_audio"].squeeze(0) for u in bucket]
+            a   = torch.nn.utils.rnn.pad_sequence(raw, batch_first=True)
+            m   = (a != 0.0).long()
+        # ---------- text  ----------
+        t  = torch.stack([u["text_input_ids"]      for u in bucket])
+        tm = torch.stack([u["text_attention_mask"] for u in bucket])
+        l  = torch.stack([u["labels"]              for u in bucket])
+        s  = torch.tensor([u["speaker_id"]         for u in bucket])
+        dmask = torch.ones(T, dtype=torch.bool)
+        return a, m, t, tm, l, s, dmask
+  
+    # ------------------------------------------------------------------
     # 2.2 dialogue‑level collate (context models)
     # ------------------------------------------------------------------
     def _collate_dialog(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
@@ -157,34 +186,32 @@ class MELDDataModule(pl.LightningDataModule):
             uts.sort(key=lambda r: r["utt_id"])  # chronological
 
         max_T = max(len(uts) for uts in buckets.values())
-        pad2T = lambda t, pad_val: torch.nn.functional.pad(t, (0, 0, 0, max_T - t.shape[0]), value=pad_val)
 
-        wavs, wmsk, txt, tmsk, lab, spk, dmask = [], [], [], [], [], [], []
+        def pad2T(t: torch.Tensor, pad_val: float = 0.0) -> torch.Tensor:
+            """Pad *time* dimension (dim-0) to max_T, leave other dims intact."""
+            diff = max_T - t.shape[0]
+            if diff <= 0:
+                return t
+            if t.dim() == 1:          # (T,) → use 1-D pad (left,right)
+                return F.pad(t, (0, diff), value=pad_val)
+            else:                     # (T, …) → pad rows only
+                return F.pad(t, (0, 0, 0, diff), value=pad_val)
+
+        wavs  = []; wmsk = []; txt = []; tmsk = []
+        lab   = []; spk  = []; dmask = []
+        tid   = []; knv  = [] 
+      
         for uts in buckets.values():
-            # audio  -----------------------------------------------------
-            if "audio_input_values" in uts[0]:
-                a = torch.nn.utils.rnn.pad_sequence([u["audio_input_values"] for u in uts], batch_first=True)
-                a = pad2T(a, 0.0)
-                m = (a.abs().sum(-1) != 0).long()
-            else:
-                raw = [u["raw_audio"].squeeze(0) for u in uts]
-                a   = torch.nn.utils.rnn.pad_sequence(raw, batch_first=True)
-                a   = pad2T(a, 0.0)
-                m   = (a != 0.0).long()
-            wavs.append(a); wmsk.append(m)
+            a,m,t,tm,l,s,z = self._pack_dialog(uts)
+            wavs.append(pad2T(a,0.0));   wmsk.append(pad2T(m,0))
+            txt.append(pad2T(t,0));      tmsk.append(pad2T(tm,0))
+            lab.append(pad2T(l,-1));     spk.append(pad2T(s,-1))
+            dmask.append(pad2T(z,0))
+            # ---- extras for TOD-KAT ----
+            tid.append(pad2T(torch.zeros_like(l),0))                # topic-id all 0
+            knv.append(pad2T(torch.zeros(l.size(0),50),0.0))        # kn vec zeros
 
-            # text -------------------------------------------------------
-            t  = pad2T(torch.stack([u["text_input_ids"] for u in uts]), 0)
-            tm = pad2T(torch.stack([u["text_attention_mask"] for u in uts]), 0)
-            txt.append(t); tmsk.append(tm)
-
-            # labels / speaker / mask -----------------------------------
-            l  = pad2T(torch.stack([u["labels"] for u in uts]), -1)
-            s  = pad2T(torch.tensor([u["speaker_id"] for u in uts]), -1)
-            z  = pad2T(torch.ones_like(l), 0)
-            lab.append(l); spk.append(s); dmask.append(z)
-
-        out = {
+        return {
             "wav":         torch.stack(wavs),
             "wav_mask":    torch.stack(wmsk),
             "txt":         torch.stack(txt),
@@ -192,8 +219,10 @@ class MELDDataModule(pl.LightningDataModule):
             "labels":      torch.stack(lab),
             "speaker_id":  torch.stack(spk),
             "dialog_mask": torch.stack(dmask).bool(),
+            "topic_id":    torch.stack(tid),        # harmless extra for Dialog-RNN
+            "kn_vec":      torch.stack(knv),        # idem
         }
-        return out
+ 
 
     # ------------------------------------------------------------------
     # 2.3 generic loader builder
@@ -208,8 +237,17 @@ class MELDDataModule(pl.LightningDataModule):
             sampler, shuffle = WeightedRandomSampler(w, len(w), replacement=True), False
 
         arch = getattr(self.cfg, "architecture", "").lower()
-        if arch in {"dialog_rnn", "todkat_lite"}:
-            collate = self._collate_dialog
+        if arch == "dialog_rnn":
+            # post-filter the dict to exactly what Dialog-RNN expects
+            def collate(batch):
+                b = self._collate_dialog(batch)
+                keep = ["wav","wav_mask","txt","txt_mask",
+                        "labels","speaker_id","dialog_mask"]
+                return {k:b[k] for k in keep}
+        elif arch == "todkat_lite":
+            def collate(batch):
+                b = self._collate_dialog(batch)
+                return b        # TOD-KAT consumes topic_id & kn_vec too
         else:
             collate = self._to_5tuple
 
