@@ -1,42 +1,55 @@
-"""utils/data_processor.py – raw‑audio‑first version
 
-* Works when `audio_input_type` is set to **"raw_wav"** (no pre‑computed
-  features).  If `audio_features` happen to exist, it still handles them.
-* Always outputs `(wav, wav_mask, txt, txt_mask, labels)`.
-* Stereo clips are down‑mixed to mono via `.mean(0)` instead of `squeeze(0)`.
-* PosixPath → str cast for `load_from_disk`.
+"""utils/data_processor.py – dialogue‑level batching
+====================================================
+Drop‑in replacement that
+* supports both utterance‑level (baseline) **and** dialogue‑level (Dialog‑RNN,
+  TOD‑KAT‑lite) batches, selected via `cfg.architecture`.
+* groups rows by `Dialogue_ID`, padds to the longest dialogue in the batch and
+  returns `(B, T,·)` tensors + `speaker_id`, `dialog_mask`.
+* keeps helper functions (`download_meld_dataset`, …) but wraps them in
+  `if __name__ == "__main__":` so importing during training never triggers
+  missing‑import errors.
 """
+
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 import torch
 import torchaudio
 import datasets as hf
+import pandas as pd
 import pytorch_lightning as pl
+from datasets import load_from_disk
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from transformers import AutoTokenizer
 
+################################################################################
+# small util (needed by helper funcs at end) -----------------------------------
+################################################################################
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1.  MELDDataset (lean but robust)
-# ──────────────────────────────────────────────────────────────────────────────
+def ensure_dir(p: Path) -> Path:
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+################################################################################
+# 1. MELDDataset – one row = one utterance
+################################################################################
 
 class MELDDataset(Dataset):
-    """Return dict with text, raw audio or pre‑extracted features, and label."""
+    """Returns a dict with text/audio/labels + metadata for a single utterance."""
 
     def __init__(
         self,
         hf_split: hf.arrow_dataset.Dataset,
         text_encoder_name: str,
+        *,
         audio_input_type: str = "raw_wav",
         text_max_len: int = 128,
     ) -> None:
-        # underlying HF split (for sampling and direct indexing)
         self.ds = hf_split
-        self.hf_dataset = hf_split
-        # tokenizer for text
         self.tok = AutoTokenizer.from_pretrained(text_encoder_name)
         self.audio_input_type = audio_input_type
         self.text_max_len = text_max_len
@@ -48,142 +61,156 @@ class MELDDataset(Dataset):
         row = self.ds[idx]
         out: Dict[str, Any] = {}
 
-        # --- text ----------------------------------------------------------
+        # ── text --------------------------------------------------------------
         toks = self.tok(
-            row["text"],
-            max_length=self.text_max_len,
-            truncation=True,
-            padding="max_length",
-            return_tensors="pt",
+            row["text"], max_length=self.text_max_len, truncation=True,
+            padding="max_length", return_tensors="pt"
         )
-        out["text_input_ids"] = toks["input_ids"].squeeze(0)
+        out["text_input_ids"]   = toks["input_ids"].squeeze(0)
         out["text_attention_mask"] = toks["attention_mask"].squeeze(0)
 
-        # --- audio ---------------------------------------------------------
+        # ── audio -------------------------------------------------------------
         if self.audio_input_type == "hf_features" and "audio_features" in row:
             out["audio_input_values"] = torch.tensor(row["audio_features"])
         else:
-            wav, sr = self._safe_load_wav(str(row["audio_path"]), fallback_sr=16000)
-            wav = wav / wav.abs().max().clamp(min=1e-5)
-            out["raw_audio"] = wav
+            wav, sr = self._safe_load(str(row["audio_path"]))
+            out["raw_audio"]    = wav / wav.abs().max().clamp(min=1e-5)
             out["sampling_rate"] = sr
 
-        # --- label ---------------------------------------------------------
-        out["labels"] = torch.tensor(row["label"], dtype=torch.long)
+        # ── labels & meta -----------------------------------------------------
+        out["labels"]      = torch.tensor(row["label"], dtype=torch.long)
+        out["dialogue_id"] = int(row["Dialogue_ID" ])
+        out["utt_id"]      = int(row["Utterance_ID"])
+                # map speaker string → stable integer id
+        sid = row["Speaker"]
+        if not hasattr(self, "_spkmap"):
+            self._spkmap = {}
+        if sid not in self._spkmap:
+            self._spkmap[sid] = len(self._spkmap)
+        out["speaker_id"] = self._spkmap[sid]
         return out
 
     @staticmethod
-    def _safe_load_wav(path: str, fallback_sr: int):
+    def _safe_load(path: str, sr: int = 16000):
         try:
             wav, sr = torchaudio.load(path)
         except Exception:
-            wav, sr = torch.zeros(1, fallback_sr), fallback_sr
+            wav, sr = torch.zeros(1, sr), sr
         if wav.shape[0] > 1:
             wav = wav.mean(0, keepdim=True)
         return wav, sr
 
-    def collate_fn(self, batch):
-        coll: Dict[str, Any] = {}
-        coll["text_input_ids"] = torch.stack([b["text_input_ids"] for b in batch])
-        coll["text_attention_mask"] = torch.stack([b["text_attention_mask"] for b in batch])
-
-        if "audio_input_values" in batch[0]:
-            feats = [b["audio_input_values"] for b in batch]
-            coll["audio_input_values"] = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True)
-            coll["audio_attention_mask"] = (coll["audio_input_values"].abs().sum(-1) != 0).long()
-        else:
-            coll["raw_audio"] = [b["raw_audio"] for b in batch]
-            coll["sampling_rate"] = batch[0]["sampling_rate"]
-
-        coll["labels"] = torch.stack([b["labels"] for b in batch])
-        return coll
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 2.  Lightning DataModule (unified 5‑tuple output)
-# ──────────────────────────────────────────────────────────────────────────────
+################################################################################
+# 2.  Lightning DataModule
+################################################################################
 
 class MELDDataModule(pl.LightningDataModule):
-    """Outputs (wav, wav_mask, txt, txt_mask, labels) for all splits."""
+    """Switches between utterance‑ and dialogue‑level collation at runtime."""
 
-    def __init__(self, config):
+    def __init__(self, cfg):
         super().__init__()
-        self.cfg = config
-        self.datasets: Dict[str, MELDDataset] = {}
+        self.cfg = cfg
+        self.ds: Dict[str, MELDDataset] = {}
 
+    # ------------------------------------------------------------------
     def setup(self, stage: str | None = None):
-        if self.datasets:
+        if self.ds:
             return
-        root = Path(self.cfg.data_root) / "processed" / "features" / "hf_datasets"
+        root = Path(self.cfg.data_root) / "processed/features/hf_datasets"
         for split in ("train", "dev", "test"):
             hf_ds = hf.load_from_disk(str(root / split))
-            self.datasets[split] = MELDDataset(
+            self.ds[split] = MELDDataset(
                 hf_ds,
                 self.cfg.text_encoder_model_name,
                 audio_input_type=getattr(self.cfg, "audio_input_type", "raw_wav"),
                 text_max_len=getattr(self.cfg, "text_max_len", 128),
             )
 
-    def _to_5tuple(self, raw: Dict[str, Any]):
-        txt = raw["text_input_ids"]
-        txt_mask = raw["text_attention_mask"]
-        labels = raw["labels"]
-        if "audio_input_values" in raw:
-            wav = raw["audio_input_values"]
-            wav_mask = raw["audio_attention_mask"]
+    # ------------------------------------------------------------------
+    # 2.1 utterance‑level collate (baseline)
+    # ------------------------------------------------------------------
+    def _to_5tuple(self, rows: List[Dict[str, Any]]):
+        txt  = torch.stack([r["text_input_ids"]      for r in rows])
+        tmsk = torch.stack([r["text_attention_mask"] for r in rows])
+        lab  = torch.stack([r["labels"]              for r in rows])
+
+        if "audio_input_values" in rows[0]:
+            wav = torch.nn.utils.rnn.pad_sequence([r["audio_input_values"] for r in rows], batch_first=True)
+            wmsk = (wav.abs().sum(-1) != 0).long()
         else:
-            wavs = [a.squeeze(0) for a in raw["raw_audio"]]
-            wav = torch.nn.utils.rnn.pad_sequence(wavs, batch_first=True, padding_value=0.0)
-            wav_mask = (wav != 0.0).long()
-        return wav, wav_mask, txt, txt_mask, labels
+            wavs = [r["raw_audio"].squeeze(0) for r in rows]
+            wav  = torch.nn.utils.rnn.pad_sequence(wavs, batch_first=True)
+            wmsk = (wav != 0.0).long()
+        return wav, wmsk, txt, tmsk, lab
 
-    def _to_8tuple(self, raw):
-        wav, wav_mask, txt, txt_mask, labels = self._to_5tuple(raw)
-        labels = labels.unsqueeze(1)                   # <-- add this
-        topic_id    = torch.zeros_like(labels)
-        dialog_mask = (wav_mask.sum(-1) != 0).long()
-        kn_vec      = torch.zeros(labels.size(0), labels.size(1), 50)
-        
-        return wav, wav_mask, txt, txt_mask, labels, topic_id, dialog_mask, kn_vec
+    # ------------------------------------------------------------------
+    # 2.2 dialogue‑level collate (context models)
+    # ------------------------------------------------------------------
+    def _collate_dialog(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        # group by dialogue
+        buckets: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        for row in batch:
+            buckets[row["dialogue_id"]].append(row)
+        for uts in buckets.values():
+            uts.sort(key=lambda r: r["utt_id"])  # chronological
 
-    def _loader(self, split: str, shuffle: bool):
-        ds = self.datasets[split]
+        max_T = max(len(uts) for uts in buckets.values())
+        pad2T = lambda t, pad_val: torch.nn.functional.pad(t, (0, 0, 0, max_T - t.shape[0]), value=pad_val)
 
+        wavs, wmsk, txt, tmsk, lab, spk, dmask = [], [], [], [], [], [], []
+        for uts in buckets.values():
+            # audio  -----------------------------------------------------
+            if "audio_input_values" in uts[0]:
+                a = torch.nn.utils.rnn.pad_sequence([u["audio_input_values"] for u in uts], batch_first=True)
+                a = pad2T(a, 0.0)
+                m = (a.abs().sum(-1) != 0).long()
+            else:
+                raw = [u["raw_audio"].squeeze(0) for u in uts]
+                a   = torch.nn.utils.rnn.pad_sequence(raw, batch_first=True)
+                a   = pad2T(a, 0.0)
+                m   = (a != 0.0).long()
+            wavs.append(a); wmsk.append(m)
+
+            # text -------------------------------------------------------
+            t  = pad2T(torch.stack([u["text_input_ids"] for u in uts]), 0)
+            tm = pad2T(torch.stack([u["text_attention_mask"] for u in uts]), 0)
+            txt.append(t); tmsk.append(tm)
+
+            # labels / speaker / mask -----------------------------------
+            l  = pad2T(torch.stack([u["labels"] for u in uts]), -1)
+            s  = pad2T(torch.tensor([u["speaker_id"] for u in uts]), -1)
+            z  = pad2T(torch.ones_like(l), 0)
+            lab.append(l); spk.append(s); dmask.append(z)
+
+        out = {
+            "wav":         torch.stack(wavs),
+            "wav_mask":    torch.stack(wmsk),
+            "txt":         torch.stack(txt),
+            "txt_mask":    torch.stack(tmsk),
+            "labels":      torch.stack(lab),
+            "speaker_id":  torch.stack(spk),
+            "dialog_mask": torch.stack(dmask).bool(),
+        }
+        return out
+
+    # ------------------------------------------------------------------
+    # 2.3 generic loader builder
+    # ------------------------------------------------------------------
+    def _make_loader(self, split: str, shuffle: bool):
+        ds = self.ds[split]
+
+        sampler = None
         if split == "train":
-            # pull the raw labels out of the underlying HF-split
-            labels = torch.tensor(ds.hf_dataset["label"])
-            # compute per-class weights: inverse of freq
-            class_counts  = torch.bincount(labels, minlength=self.cfg.output_dim)
-            class_weights = 1.0 / class_counts.float()
-            # per-sample weights
-            sample_weights = class_weights[labels]
-            sampler = WeightedRandomSampler(
-                weights=sample_weights,
-                num_samples=len(sample_weights),
-                replacement=True
-            )
-            shuffle = False
-        else:
-            sampler, shuffle = None, False
+            y = torch.tensor(ds.ds["label"])
+            w = (1.0 / torch.bincount(y, minlength=self.cfg.output_dim))[y]
+            sampler, shuffle = WeightedRandomSampler(w, len(w), replacement=True), False
 
-        # choose collate
         arch = getattr(self.cfg, "architecture", "").lower()
-        if arch == "todkat_lite":
-            def collate(batch):
-                tup = self._to_8tuple(ds.collate_fn(batch))
-                return {
-                    "wav":         tup[0],
-                    "wav_mask":    tup[1],
-                    "txt":         tup[2],
-                    "txt_mask":    tup[3],
-                    "labels":      tup[4],
-                    "topic_id":    tup[5],
-                    "dialog_mask": tup[6],
-                    "kn_vec":      tup[7],
-                }
+        if arch in {"dialog_rnn", "todkat_lite"}:
+            collate = self._collate_dialog
         else:
-            collate = lambda batch: self._to_5tuple(ds.collate_fn(batch))
-    
+            collate = lambda b: self._to_5tuple(ds.collate_fn(b))
+
         return DataLoader(
             ds,
             batch_size=self.cfg.batch_size,
@@ -194,206 +221,215 @@ class MELDDataModule(pl.LightningDataModule):
             collate_fn=collate,
         )
 
-
+    # Lightning hooks ---------------------------------------------------
     def train_dataloader(self):
-        return self._loader("train", True)
+        return self._make_loader("train", True)
 
     def val_dataloader(self):
-        return self._loader("dev", False)
+        return self._make_loader("dev", False)
 
     def test_dataloader(self):
-        return self._loader("test", False)
+        return self._make_loader("test", False)
+
+
+################################################################################
+# 3. helper scripts (optional) wrapped to avoid import‑time execution ----------
+################################################################################
+
+if __name__ == "__main__":
+    def download_meld_dataset(data_dir: Path):
+        """Download the MELD dataset.
+        
+        Args:
+            data_dir: Directory to store the dataset
+        """
+        import subprocess
+        from zipfile import ZipFile
+        import shutil
+        import urllib.request
+        
+        # Ensure directory exists
+        data_dir = ensure_dir(data_dir)
+        
+        # URLs for MELD dataset
+        meld_urls = {
+            "raw": "https://web.eecs.umich.edu/~mihalcea/downloads/MELD.Raw.tar.gz",
+            "features": "https://web.eecs.umich.edu/~mihalcea/downloads/MELD.Features.Models.tar.gz"
+        }
+        
+        # Download and extract raw data
+        raw_data_dir = data_dir / "raw"
+        ensure_dir(raw_data_dir)
+        
+        for data_type, url in meld_urls.items():
+            target_dir = data_dir / data_type
+            ensure_dir(target_dir)
+            
+            # Download file
+            tar_file = target_dir / f"MELD.{data_type.capitalize()}.tar.gz"
+            if not tar_file.exists():
+                print(f"Downloading {data_type} MELD dataset...")
+                urllib.request.urlretrieve(url, tar_file)
+            
+            # Extract file
+            if not (target_dir / "MELD").exists():
+                print(f"Extracting {data_type} MELD dataset...")
+                subprocess.run(["tar", "-xzf", str(tar_file), "-C", str(target_dir)])
+        
+        print("MELD dataset downloaded and extracted successfully.")
+        return data_dir
+    
+    
+    def convert_mp4_to_wav(config, force=False):
+        """Convert MP4 files to WAV format.
+        
+        Args:
+            config: Configuration object
+            force: Whether to force conversion even if WAV files exist
+        """
+        from pathlib import Path
+        import subprocess
+        import glob
+        import os
+        
+        # Get paths
+        mp4_dir = config.raw_data_dir / "MELD.Raw" / "train_splits"
+        wav_output_dir = config.processed_audio_dir
+        
+        # Ensure output directory exists
+        ensure_dir(wav_output_dir)
+        
+        # Find MP4 files
+        mp4_files = list(mp4_dir.glob("**/*.mp4"))
+        
+        print(f"Found {len(mp4_files)} MP4 files to convert")
+        
+        # Process each MP4 file
+        for i, mp4_file in enumerate(mp4_files):
+            # Create relative path to maintain directory structure
+            rel_path = mp4_file.relative_to(mp4_dir)
+            wav_path = wav_output_dir / rel_path.with_suffix(".wav")
+            
+            # Create parent directories
+            ensure_dir(wav_path.parent)
+            
+            # Skip if WAV file exists and force is False
+            if wav_path.exists() and not force:
+                continue
+            
+            # Convert MP4 to WAV using ffmpeg
+            print(f"Converting {i+1}/{len(mp4_files)}: {mp4_file.name} -> {wav_path.name}")
+            subprocess.run([
+                "ffmpeg", 
+                "-i", str(mp4_file),
+                "-ac", "1",              # Mono audio
+                "-ar", "16000",         # 16kHz sample rate
+                "-y",                   # Overwrite existing files
+                str(wav_path)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        print("MP4 to WAV conversion completed.")
+        
+    
+    
+    def prepare_hf_dataset(config, force=False):
+        """Prepare Hugging Face dataset from MELD CSV files.
+        
+        Args:
+            config: Configuration object
+            force: Whether to force reprocessing even if dataset exists
+        """
+        from datasets import Dataset as HFDataset
+        
+        # Ensure directories exist
+        ensure_dir(config.processed_features_dir)
+        ensure_dir(config.hf_dataset_dir)
+        
+        # Check if dataset already exists
+        all_splits_exist = all((config.hf_dataset_dir / split).exists() for split in ["train", "dev", "test"])
+        if all_splits_exist and not force:
+            print("Hugging Face datasets already exist. Use force=True to reprocess.")
+            return
+        
+        # Process each split
+        for split in ["train", "dev", "test"]:
+            # Get CSV file path
+            csv_file = config.raw_data_dir / "MELD.Raw" / f"{split}_splits" / f"{split}_sent_emo.csv"
+            if not csv_file.exists():
+                print(f"Warning: CSV file not found: {csv_file}")
+                continue
+            
+            # Load CSV file
+            df = pd.read_csv(csv_file)
+            
+            # Map emotion labels to integers
+            emotion_labels = {
+                "neutral": 0, "anger": 1, "disgust": 2, "fear": 3,
+                "joy": 4, "sadness": 5, "surprise": 6
+            }
+            df["label"] = df["Emotion"].map(emotion_labels)
+            
+            # Add audio paths
+            df["audio_path"] = df.apply(
+                lambda row: str(config.processed_audio_dir / f"{split}_splits" / f"dia{row['Dialogue_ID']}" / f"utt{row['Utterance_ID']}.wav"),
+                axis=1
+            )
+            
+            # Filter to include only rows with existing audio files
+            df = df[df["audio_path"].apply(lambda path: Path(path).exists())]
+            
+            # Create HuggingFace dataset
+            hf_dataset = HFDataset.from_pandas(df)
+            
+            # Map function to extract audio features (if needed)
+            # You would implement feature extraction here if needed
+            
+            # Save the dataset
+            output_path = config.hf_dataset_dir / split
+            hf_dataset.save_to_disk(output_path)
+            
+            print(f"Processed {split} split with {len(hf_dataset)} samples.")
+        
+        print("HuggingFace dataset preparation completed.")
+    
+    
+    def get_class_distribution(hf_dataset_dir):
+        """Get class distribution for each split.
+        
+        Args:
+            hf_dataset_dir: Directory containing HuggingFace datasets
+        """
+        emotion_names = [
+            "neutral", "anger", "disgust", "fear", "joy", "sadness", "surprise"
+        ]
+        
+        result = {}
+        
+        for split in ["train", "dev", "test"]:
+            try:
+                dataset_path = hf_dataset_dir / split
+                if not dataset_path.exists():
+                    continue
+                
+                dataset = load_from_disk(str(dataset_path))
+                
+                # Count occurrences of each label
+                label_counts = {}
+                for i in range(7):  # 7 emotion classes
+                    count = sum(1 for label in dataset["label"] if label == i)
+                    label_counts[emotion_names[i]] = count
+                
+                result[split] = label_counts
+                
+            except Exception as e:
+                print(f"Error getting class distribution for {split}: {e}")
+        
+        return result
+
+    pass
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. Utility functions to download the MELD dataset from HF
 # ──────────────────────────────────────────────────────────────────────────────
 
-def download_meld_dataset(data_dir: Path):
-    """Download the MELD dataset.
-    
-    Args:
-        data_dir: Directory to store the dataset
-    """
-    import subprocess
-    from zipfile import ZipFile
-    import shutil
-    import urllib.request
-    
-    # Ensure directory exists
-    data_dir = ensure_dir(data_dir)
-    
-    # URLs for MELD dataset
-    meld_urls = {
-        "raw": "https://web.eecs.umich.edu/~mihalcea/downloads/MELD.Raw.tar.gz",
-        "features": "https://web.eecs.umich.edu/~mihalcea/downloads/MELD.Features.Models.tar.gz"
-    }
-    
-    # Download and extract raw data
-    raw_data_dir = data_dir / "raw"
-    ensure_dir(raw_data_dir)
-    
-    for data_type, url in meld_urls.items():
-        target_dir = data_dir / data_type
-        ensure_dir(target_dir)
-        
-        # Download file
-        tar_file = target_dir / f"MELD.{data_type.capitalize()}.tar.gz"
-        if not tar_file.exists():
-            print(f"Downloading {data_type} MELD dataset...")
-            urllib.request.urlretrieve(url, tar_file)
-        
-        # Extract file
-        if not (target_dir / "MELD").exists():
-            print(f"Extracting {data_type} MELD dataset...")
-            subprocess.run(["tar", "-xzf", str(tar_file), "-C", str(target_dir)])
-    
-    print("MELD dataset downloaded and extracted successfully.")
-    return data_dir
-
-
-def convert_mp4_to_wav(config, force=False):
-    """Convert MP4 files to WAV format.
-    
-    Args:
-        config: Configuration object
-        force: Whether to force conversion even if WAV files exist
-    """
-    from pathlib import Path
-    import subprocess
-    import glob
-    import os
-    
-    # Get paths
-    mp4_dir = config.raw_data_dir / "MELD.Raw" / "train_splits"
-    wav_output_dir = config.processed_audio_dir
-    
-    # Ensure output directory exists
-    ensure_dir(wav_output_dir)
-    
-    # Find MP4 files
-    mp4_files = list(mp4_dir.glob("**/*.mp4"))
-    
-    print(f"Found {len(mp4_files)} MP4 files to convert")
-    
-    # Process each MP4 file
-    for i, mp4_file in enumerate(mp4_files):
-        # Create relative path to maintain directory structure
-        rel_path = mp4_file.relative_to(mp4_dir)
-        wav_path = wav_output_dir / rel_path.with_suffix(".wav")
-        
-        # Create parent directories
-        ensure_dir(wav_path.parent)
-        
-        # Skip if WAV file exists and force is False
-        if wav_path.exists() and not force:
-            continue
-        
-        # Convert MP4 to WAV using ffmpeg
-        print(f"Converting {i+1}/{len(mp4_files)}: {mp4_file.name} -> {wav_path.name}")
-        subprocess.run([
-            "ffmpeg", 
-            "-i", str(mp4_file),
-            "-ac", "1",              # Mono audio
-            "-ar", "16000",         # 16kHz sample rate
-            "-y",                   # Overwrite existing files
-            str(wav_path)
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    print("MP4 to WAV conversion completed.")
-    
-
-
-def prepare_hf_dataset(config, force=False):
-    """Prepare Hugging Face dataset from MELD CSV files.
-    
-    Args:
-        config: Configuration object
-        force: Whether to force reprocessing even if dataset exists
-    """
-    from datasets import Dataset as HFDataset
-    
-    # Ensure directories exist
-    ensure_dir(config.processed_features_dir)
-    ensure_dir(config.hf_dataset_dir)
-    
-    # Check if dataset already exists
-    all_splits_exist = all((config.hf_dataset_dir / split).exists() for split in ["train", "dev", "test"])
-    if all_splits_exist and not force:
-        print("Hugging Face datasets already exist. Use force=True to reprocess.")
-        return
-    
-    # Process each split
-    for split in ["train", "dev", "test"]:
-        # Get CSV file path
-        csv_file = config.raw_data_dir / "MELD.Raw" / f"{split}_splits" / f"{split}_sent_emo.csv"
-        if not csv_file.exists():
-            print(f"Warning: CSV file not found: {csv_file}")
-            continue
-        
-        # Load CSV file
-        df = pd.read_csv(csv_file)
-        
-        # Map emotion labels to integers
-        emotion_labels = {
-            "neutral": 0, "anger": 1, "disgust": 2, "fear": 3,
-            "joy": 4, "sadness": 5, "surprise": 6
-        }
-        df["label"] = df["Emotion"].map(emotion_labels)
-        
-        # Add audio paths
-        df["audio_path"] = df.apply(
-            lambda row: str(config.processed_audio_dir / f"{split}_splits" / f"dia{row['Dialogue_ID']}" / f"utt{row['Utterance_ID']}.wav"),
-            axis=1
-        )
-        
-        # Filter to include only rows with existing audio files
-        df = df[df["audio_path"].apply(lambda path: Path(path).exists())]
-        
-        # Create HuggingFace dataset
-        hf_dataset = HFDataset.from_pandas(df)
-        
-        # Map function to extract audio features (if needed)
-        # You would implement feature extraction here if needed
-        
-        # Save the dataset
-        output_path = config.hf_dataset_dir / split
-        hf_dataset.save_to_disk(output_path)
-        
-        print(f"Processed {split} split with {len(hf_dataset)} samples.")
-    
-    print("HuggingFace dataset preparation completed.")
-
-
-def get_class_distribution(hf_dataset_dir):
-    """Get class distribution for each split.
-    
-    Args:
-        hf_dataset_dir: Directory containing HuggingFace datasets
-    """
-    emotion_names = [
-        "neutral", "anger", "disgust", "fear", "joy", "sadness", "surprise"
-    ]
-    
-    result = {}
-    
-    for split in ["train", "dev", "test"]:
-        try:
-            dataset_path = hf_dataset_dir / split
-            if not dataset_path.exists():
-                continue
-            
-            dataset = load_from_disk(str(dataset_path))
-            
-            # Count occurrences of each label
-            label_counts = {}
-            for i in range(7):  # 7 emotion classes
-                count = sum(1 for label in dataset["label"] if label == i)
-                label_counts[emotion_names[i]] = count
-            
-            result[split] = label_counts
-            
-        except Exception as e:
-            print(f"Error getting class distribution for {split}: {e}")
-    
-    return result
