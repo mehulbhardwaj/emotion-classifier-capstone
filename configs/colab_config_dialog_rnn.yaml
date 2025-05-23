@@ -1,48 +1,52 @@
-# Dialog-RNN Configuration for Google Colab
-# =============================================
+# Simple Dialog-RNN Config (No Hydra syntax)
+# ============================================
 
-# Architecture Selection (CRITICAL!)
-architecture_name: "dialog_rnn"  # NOT "mlp_fusion"!
+# CRITICAL: Architecture selection
+architecture_name: dialog_rnn
 
-# Data Paths (Colab)
-data_root: "/content/drive/MyDrive/dlfa_capstone"
-
-# Model Architecture
-output_dim: 7
-gru_hidden_size: 128
-mlp_hidden_size: 2048
-context_window: 0  # 0 = use full dialog
-
-# Training Parameters  
-batch_size: 8
-num_epochs: 25
-learning_rate: 1e-4
-weight_decay: 1e-4
-focal_gamma: 2.0
-
-# Data Processing
-text_max_len: 128
-audio_input_type: "raw_wav"
-dataloader_num_workers: 4
-
-# Encoders
-text_encoder_model_name: "roberta-base"
-audio_encoder_model_name: "facebook/wav2vec2-base-960h"
-freeze_text_encoder: true
-freeze_audio_encoder: true
-
-# Experiment Settings
-experiment_name: "colab_test"
-run_name: "dialog_rnn"
+# Experiment settings
+experiment_name: colab_run_dialog_rnn
 random_seed: 42
 
-# Training Options
-use_mixed_precision: true
-grad_accumulation_steps: 1
-early_stopping_patience: 5
+# Data paths
+data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
 
-# Class weights (MELD distribution)
-class_weights: [0.8, 1.5, 2.0, 2.5, 1.2, 1.8, 2.2]
+# Model architecture settings
+output_dim: 7
+gru_hidden_size: 256
+context_window: 10
+mlp_hidden_size: 2048
+
+# Encoder settings
+text_encoder_model_name: roberta-base
+audio_encoder_model_name: facebook/wav2vec2-base-960h
+audio_input_type: raw_wav
+freeze_text_encoder: false  # Allow fine-tuning
+freeze_audio_encoder: false  # Allow fine-tuning
+
+# Training settings
+batch_size: 8
+num_epochs: 30
+learning_rate: 1e-5
+weight_decay: 1e-4
+optimizer_name: AdamW
+
+# Loss settings
+focal_gamma: 2.0
+
+# Class weights for MELD emotion imbalance
+class_weights: [1.62, 8.22, 11.19, 1.40, 0.45, 2.69, 2.00]
+
+# Training options
+use_mixed_precision: true
+early_stopping_patience: 5
+grad_accumulation_steps: 1
+
+# DataLoader settings
+dataloader_num_workers: 2
+
+# Additional settings retained from Hydra config
+mlp_dropout_rate: 0.3
 
 # Output Directories (will be created automatically)
 output_dir: "/content/emotion-classifier-capstone/output" 

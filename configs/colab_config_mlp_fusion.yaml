@@ -1,46 +1,48 @@
-# MLP Fusion Configuration for Google Colab
-# ===========================================
+# Simple MLP Fusion Config (No Hydra syntax)
+# ==========================================
 
-# Architecture Selection
-architecture_name: "mlp_fusion"
+# CRITICAL: Architecture selection
+architecture_name: mlp_fusion
 
-# Data Paths (Colab)
-data_root: "/content/drive/MyDrive/dlfa_capstone"
+# Experiment settings
+experiment_name: colab_run_mlp_fusion
+random_seed: 42
 
-# Model Architecture
+# Data paths
+data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
+
+# Model architecture settings
 output_dim: 7
 mlp_hidden_size: 512
+mlp_dropout_rate: 0.3
 
-# Training Parameters  
+# Encoder settings
+text_encoder_model_name: roberta-base
+audio_encoder_model_name: facebook/wav2vec2-base-960h
+audio_input_type: raw_wav
+freeze_text_encoder: true  # Keep frozen for baseline
+freeze_audio_encoder: true  # Keep frozen for baseline
+
+# Training settings
 batch_size: 16
 num_epochs: 25
 learning_rate: 1e-4
 weight_decay: 1e-4
+optimizer_name: AdamW
+
+# Loss settings
 focal_gamma: 2.0
 
-# Data Processing
-text_max_len: 128
-audio_input_type: "raw_wav"
-dataloader_num_workers: 4
+# Class weights for MELD emotion imbalance
+class_weights: [1.62, 8.22, 11.19, 1.40, 0.45, 2.69, 2.00]
 
-# Encoders
-text_encoder_model_name: "roberta-base"
-audio_encoder_model_name: "facebook/wav2vec2-base-960h"
-freeze_text_encoder: true
-freeze_audio_encoder: true
-
-# Experiment Settings
-experiment_name: "colab_test"
-run_name: "mlp_fusion"
-random_seed: 42
-
-# Training Options
+# Training options
 use_mixed_precision: true
-grad_accumulation_steps: 1
 early_stopping_patience: 5
+grad_accumulation_steps: 1
 
-# Class weights (MELD distribution)
-class_weights: [0.8, 1.5, 2.0, 2.5, 1.2, 1.8, 2.2]
+# DataLoader settings
+dataloader_num_workers: 2
 
-# Output Directories
-output_dir: "/content/emotion-classifier-capstone/output" 
+# Text processing
+text_max_length: 128 

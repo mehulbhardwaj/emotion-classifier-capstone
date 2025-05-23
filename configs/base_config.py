@@ -61,6 +61,14 @@ class Config:
     gru_hidden_size: int = 128
     context_window: int = 0
     
+    # TOD-KAT specific settings
+    topic_embedding_dim: int = 100
+    n_topics: int = 50
+    rel_transformer_layers: int = 2
+    rel_heads: int = 4
+    use_knowledge: bool = False
+    eta_min: float = 1e-7
+    
     # Loss settings
     focal_gamma: float = 2.0
     class_weights: Optional[List[float]] = None
