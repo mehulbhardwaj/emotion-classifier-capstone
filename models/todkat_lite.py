@@ -26,6 +26,7 @@ from torch import nn, optim
 from pytorch_lightning import LightningModule
 from transformers import Wav2Vec2Model, RobertaModel
 from torchmetrics.classification import MulticlassF1Score
+import pytorch_lightning as pl
 
 ################################################################################
 # focal‑loss helper
