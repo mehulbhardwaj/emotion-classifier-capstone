@@ -167,6 +167,7 @@ class MELDDataModule(pl.LightningDataModule):
             sampler, shuffle = None, False
 
         # choose collate
+        arch = getattr(self.cfg, "architecture", "").lower()
         if arch == "todkat_lite":
             def collate(batch):
                 tup = self._to_8tuple(ds.collate_fn(batch))
