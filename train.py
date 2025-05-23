@@ -49,18 +49,11 @@ def train(config):
     data_module = MELDDataModule(config)
     
     # Create the model based on architecture name
-    print(f"🔍 DEBUG: config.architecture_name = '{config.architecture_name}'")
-    print(f"🔍 DEBUG: type = {type(config.architecture_name)}")
-    print(f"🔍 DEBUG: repr = {repr(config.architecture_name)}")
-    
     if config.architecture_name == "mlp_fusion":
-        print("🤖 Creating MultimodalFusionMLP")
         model = MultimodalFusionMLP(config)
     elif config.architecture_name == "todkat_lite":
-        print("🤖 Creating TodkatLiteMLP")
         model = TodkatLiteMLP(config)
     elif config.architecture_name == "dialog_rnn":
-        print("🤖 Creating DialogRNNMLP")
         model = DialogRNNMLP(config)    
     elif config.architecture_name == "teacher":
         model = TeacherTransformer(
@@ -162,37 +155,12 @@ def train(config):
 def main():
     """Main function for training emotion classification models."""
     parser = argparse.ArgumentParser(description="Train emotion classification models")
-    parser.add_argument("--config", type=str, help="Path to YAML configuration file")
-    parser.add_argument("--architecture", type=str, default="mlp_fusion", help="Model architecture")
-    parser.add_argument("--experiment_name", type=str, help="Experiment name")
-    parser.add_argument("--batch_size", type=int, help="Batch size")
-    parser.add_argument("--num_epochs", type=int, help="Number of epochs")
-    parser.add_argument("--learning_rate", type=float, help="Learning rate")
-    parser.add_argument("--seed", type=int, help="Random seed")
+    parser.add_argument("--config", type=str, required=True, help="Path to YAML configuration file")
     
     args = parser.parse_args()
     
-    # Create configuration
-    if args.config:
-        # Load from YAML file
-        config = Config.from_yaml(args.config)
-    else:
-        # Create with default values
-        config = Config()
-    
-    # Override with command-line arguments
-    if args.architecture:
-        config.architecture_name = args.architecture
-    if args.experiment_name:
-        config.experiment_name = args.experiment_name
-    if args.batch_size:
-        config.batch_size = args.batch_size
-    if args.num_epochs:
-        config.num_epochs = args.num_epochs
-    if args.learning_rate:
-        config.learning_rate = args.learning_rate
-    if args.seed:
-        config.random_seed = args.seed
+    # Load configuration from YAML file only
+    config = Config.from_yaml(args.config)
     
     # Run training
     best_model_path = train(config)

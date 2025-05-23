@@ -57,6 +57,18 @@ class Config:
     freeze_text_encoder: bool = True
     freeze_audio_encoder: bool = True
     
+    # DialogRNN specific settings
+    gru_hidden_size: int = 128
+    context_window: int = 0
+    
+    # Loss settings
+    focal_gamma: float = 2.0
+    class_weights: Optional[List[float]] = None
+    weight_decay: float = 1e-4
+    
+    # DataLoader settings
+    dataloader_num_workers: int = 4
+    
     # Output dimensions (emotion classes)
     output_dim: int = 7  # MELD has 7 emotion classes
     
