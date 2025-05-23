@@ -12,7 +12,7 @@ from models.todkat_lite import TodkatLiteMLP
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 1) Pick your config here:
-config_path = "configs/colab_config_dialog_rnn.yaml"  # or _fusion.yaml, _todkat_lite.yaml
+config_path = "configs/colab_config_todkat_lite.yaml"  # or _fusion.yaml, _todkat_lite.yaml
 # ───────────────────────────────────────────────────────────────────────────────
 
 cfg = OmegaConf.load(config_path)
