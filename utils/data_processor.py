@@ -246,8 +246,12 @@ class MELDDataModule(pl.LightningDataModule):
             # build mapping from Dialogue_ID → list of dataset indices
             mapping: Dict[int, List[int]] = defaultdict(list)
             for idx in range(len(ds)):
-                row = ds.ds[idx]
-                mapping[row["dialogue_id"]].append(idx)
+                # Optimized: get only dialogue_id from raw dataset to avoid audio/text processing
+                raw_row = ds.ds[idx]
+                did = raw_row.get("Dialogue_ID", raw_row.get("dialogue_id"))
+                dialogue_id = int(did) if did is not None else -1
+                if dialogue_id != -1:  # Skip invalid dialogue IDs
+                    mapping[dialogue_id].append(idx)
 
             batch_sampler = DialogueBatchSampler(
                 dialogue_to_indices=mapping,
