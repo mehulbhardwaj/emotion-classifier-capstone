@@ -11,22 +11,22 @@ random_seed: 42
 # Data paths
 data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
 
-# Model architecture settings - OPTIMIZED FOR 7.5M PARAMS
+# Model architecture settings - SIMPLIFIED FOR DEBUGGING  
 output_dim: 7
-topic_embedding_dim: 64      # INCREASED: More topic representation
-n_topics: 64                 # INCREASED: More topic diversity
-rel_transformer_layers: 3    # INCREASED: Deeper reasoning (key for dialogue)
-rel_heads: 8                 # INCREASED: More attention patterns
-projection_dim: 256          # OPTIMIZED: Balance size vs capacity
-mlp_hidden_size: 1024        # INCREASED: Larger classifier capacity
+topic_embedding_dim: 64      
+n_topics: 64                 
+rel_transformer_layers: 2    # REDUCED: for debugging
+rel_heads: 4                 # REDUCED: for debugging  
+projection_dim: 256          
+mlp_hidden_size: 1024        
 mlp_dropout_rate: 0.3
-use_knowledge: true          # CORE: Knowledge is essential for TOD-KAT
-knowledge_dim: 32            # INCREASED: Richer knowledge representation
+use_knowledge: true          
+knowledge_dim: 32            
 
-# TOD-KAT Specific Features
-use_topic_mlps: true         # NEW: Add topic MLPs (fₙᵤ, fₛ) like SOTA
-use_knowledge_attention: true # NEW: Bahdanau-style knowledge attention
-transformer_dim_feedforward: 512  # INCREASED: More transformer capacity
+# TOD-KAT Specific Features - DISABLED FOR DEBUGGING
+use_topic_mlps: false        # DISABLED: for debugging
+use_knowledge_attention: false # DISABLED: for debugging
+transformer_dim_feedforward: 512
 
 # Encoder settings
 text_encoder_model_name: roberta-base

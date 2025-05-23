@@ -8,13 +8,15 @@ from configs.base_config import Config
 def check_dimensions():
     print("🔍 Checking TOD-KAT dimensions...")
     
-    # Create config
+    # Create config that matches colab_config_todkat_lite.yaml
     config = Config()
-    config.topic_embedding_dim = 32  # Updated to match new config
-    config.use_knowledge = True  # FIXED: Knowledge is core to TOD-KAT
-    config.knowledge_dim = 16    # Updated to match new config
-    config.rel_heads = 4
-    config.projection_dim = 400  # UPDATED: to target 6-7M params
+    config.topic_embedding_dim = 64     # UPDATED: to match optimal config
+    config.use_knowledge = True         # FIXED: Knowledge is core to TOD-KAT
+    config.knowledge_dim = 32           # UPDATED: to match optimal config
+    config.rel_heads = 8                # UPDATED: to match optimal config
+    config.projection_dim = 256         # UPDATED: to match optimal config
+    config.rel_transformer_layers = 3   # UPDATED: to match optimal config
+    config.transformer_dim_feedforward = 512  # UPDATED: to match optimal config
     
     # Load encoders
     audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
@@ -44,8 +46,8 @@ def check_dimensions():
     # Estimate transformer parameters
     # Self-attention: 4 * d_model^2 per layer (Q, K, V, O matrices)
     # Feed-forward: 2 * d_model * dim_feedforward per layer  
-    dim_feedforward = 128  # From the model
-    n_layers = 2
+    dim_feedforward = config.transformer_dim_feedforward
+    n_layers = config.rel_transformer_layers
     
     attention_params = 4 * d_model * d_model * n_layers
     feedforward_params = 2 * d_model * dim_feedforward * n_layers

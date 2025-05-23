@@ -64,9 +64,18 @@ class TodkatLiteMLP(LightningModule):
         self.use_knowledge: bool = bool(getattr(config, "use_knowledge", False))
         self.kn_dim: int = int(getattr(config, "knowledge_dim", 16)) if self.use_knowledge else 0
         
+        # DEBUG: Print what the model is reading
+        print(f"🔍 TOD-KAT Model Config Debug:")
+        print(f"   topic_dim: {self.topic_dim}")
+        print(f"   use_knowledge: {self.use_knowledge}")
+        print(f"   knowledge_dim: {self.kn_dim}")
+        
         # NEW: SOTA TOD-KAT features
         self.use_topic_mlps: bool = bool(getattr(config, "use_topic_mlps", False))
         self.use_knowledge_attention: bool = bool(getattr(config, "use_knowledge_attention", False))
+        
+        print(f"   use_topic_mlps: {self.use_topic_mlps}")
+        print(f"   use_knowledge_attention: {self.use_knowledge_attention}")
 
         # ----- encoders (frozen) -----
         self.audio_encoder: Wav2Vec2Model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
@@ -122,6 +131,8 @@ class TodkatLiteMLP(LightningModule):
         self.audio_proj = nn.Linear(self.audio_encoder.config.hidden_size, projection_dim)
         self.text_proj = nn.Linear(self.text_encoder.config.hidden_size, projection_dim)
         
+        print(f"   projection_dim: {projection_dim}")
+        
         # final per‑token rep dim entering Transformer (much smaller!)
         self.d_model = (
             projection_dim  # projected audio
@@ -129,6 +140,8 @@ class TodkatLiteMLP(LightningModule):
             + self.topic_dim
             + self.kn_dim
         )
+        
+        print(f"   d_model calculation: {projection_dim} + {projection_dim} + {self.topic_dim} + {self.kn_dim} = {self.d_model}")
 
         n_layers = int(getattr(config, "rel_transformer_layers", 2))
         n_heads  = int(getattr(config, "rel_heads", 4))
