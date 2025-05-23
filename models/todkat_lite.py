@@ -182,7 +182,10 @@ class TodkatLiteMLP(pl.LightningModule):
     # lightning steps
     # ------------------------------------------------------------------
     def _shared_step(self, batch: Dict[str, torch.Tensor], stage: str):
-        labels = batch["labels"][:, -1]
+        # pick each dialog’s true last label, not padded −1
+        lengths   = batch["dialog_mask"].sum(dim=1)         # (B,)
+        last_idxs = (lengths - 1).unsqueeze(-1)             # (B,1)
+        labels   = batch["labels"].gather(dim=1, index=last_idxs).squeeze(1)  # (B,)
         logits = self(batch)
         loss = focal_loss(logits, labels, self.alpha, gamma=float(getattr(self.config, "focal_gamma", 2.0)))
         preds = logits.argmax(dim=-1)
