@@ -22,6 +22,8 @@ from models.mlp_fusion import MultimodalFusionMLP
 from models.teacher import TeacherTransformer
 from models.student import StudentGRU
 from models.panns_fusion import PaNNsFusion
+from models.dialog_rnn import DialogRNNMLP
+from models.todkat_lite import TodkatLiteMLP
 
 
 def set_seed(seed):
@@ -49,6 +51,10 @@ def train(config):
     # Create the model based on architecture name
     if config.architecture_name == "mlp_fusion":
         model = MultimodalFusionMLP(config)
+    elif config.architecture_name == "todkat_lite":
+        model = MultimodalFusionMLP(config)
+    elif config.architecture_name == "dialog_rnn":
+        model = MultimodalFusionMLP(config)    
     elif config.architecture_name == "teacher":
         model = TeacherTransformer(
             hidden_size=getattr(config, "hidden_size", 256),
@@ -95,7 +101,7 @@ def train(config):
         )
     else:
         raise ValueError(f"Architecture {config.architecture_name} not implemented. "
-                         f"Choose from: mlp_fusion, teacher, student, panns_fusion.")
+                         f"Choose from: mlp_fusion, teacher, student, panns_fusion, todkat_lite, dialog_rnn.")
     
     # Set up logger
     logger = TensorBoardLogger(
