@@ -59,9 +59,7 @@ class TodkatLiteMLP(pl.LightningModule):
         self.kn_dim        = 50 if self.use_knowledge else 0
 
         # ---------- frozen encoders ----------
-        self.audio_encoder = Wav2Vec2Model.from_pretrained(
-            "facebook/wav2vec2-base-960h"
-        )
+        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
         self.text_encoder  = RobertaModel.from_pretrained("roberta-base")
         for p in self.audio_encoder.parameters(): p.requires_grad = False
         for p in self.text_encoder.parameters():  p.requires_grad = False
@@ -105,6 +103,9 @@ class TodkatLiteMLP(pl.LightningModule):
             num_layers=int(getattr(config, "rel_transformer_layers", 2)),
         )
 
+        # ----- optional LayerNorm on context output -----
+        self.norm = nn.LayerNorm(self.d_model)
+      
         # ---------- classifier ----------
         mlp_hidden = int(getattr(config, "mlp_hidden_size", 512))
         self.classifier = nn.Sequential(
@@ -243,7 +244,7 @@ class TodkatLiteMLP(pl.LightningModule):
     
             optimizer = optim.AdamW(groups, weight_decay=wd)
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                opt,
+                optimizer,
                 T_max=int(self.config.num_epochs),
                 eta_min=float(getattr(self.config, "eta_min", 1e-7)),
             )
