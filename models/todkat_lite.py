@@ -127,7 +127,7 @@ class TodkatLiteMLP(LightningModule):
 
         # ----- ADD PROJECTION LAYERS TO REDUCE d_model -----
         # Project high-dimensional features to smaller dimensions
-        projection_dim = int(getattr(config, "projection_dim", 128))
+        projection_dim = int(getattr(config, "projection_dim", 256))
         self.audio_proj = nn.Linear(self.audio_encoder.config.hidden_size, projection_dim)
         self.text_proj = nn.Linear(self.text_encoder.config.hidden_size, projection_dim)
         

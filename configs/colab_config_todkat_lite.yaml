@@ -23,9 +23,9 @@ mlp_dropout_rate: 0.3
 use_knowledge: true          
 knowledge_dim: 32            
 
-# TOD-KAT Specific Features - DISABLED FOR DEBUGGING
-use_topic_mlps: false        # DISABLED: for debugging
-use_knowledge_attention: false # DISABLED: for debugging
+# TOD-KAT Specific Features
+use_topic_mlps: true          # ENABLED: Add topic MLPs (fₙᵤ, fₛ) for +2.4M params
+use_knowledge_attention: false # Keep disabled for now
 transformer_dim_feedforward: 512
 
 # Encoder settings
