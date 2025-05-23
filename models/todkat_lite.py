@@ -160,10 +160,22 @@ class TodkatLiteMLP(pl.LightningModule):
             src_key_padding_mask=~batch["dialog_mask"].bool()  # True = PAD
         )                                     # (B,T,d_model)
 
-        fused = torch.cat(
-            [a_emb[:,-1,:], t_emb[:,-1,:], ctx[:,-1,:]],
-            dim=-1
-        )
+        # pick the last *valid* time-step per example
+        # mask: (B,T) bool, lengths = #valid utterances
+        lengths = batch["dialog_mask"].sum(dim=1)            # (B,)
+        idxs    = (lengths - 1).unsqueeze(-1)                # (B,1)
+        # gather each embedding at its last valid index
+        def gather_last(x):
+            # x: (B,T,D)
+            return x.gather(
+                dim=1,
+                index=idxs.unsqueeze(-1).expand(-1, -1, x.size(-1))
+            ).squeeze(1)  # → (B,D)
+
+        last_a = gather_last(a_emb)
+        last_t = gather_last(t_emb)
+        last_c = gather_last(ctx)
+        fused  = torch.cat([last_a, last_t, last_c], dim=-1)
         return self.classifier(fused)         # (B,C)
 
     # ------------------------------------------------------------------
