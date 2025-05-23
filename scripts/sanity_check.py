@@ -31,7 +31,7 @@ dm.setup()
 loader = dm.train_dataloader()
 
 # 3) build model
-arch = cfg.architecture.lower()
+arch = getattr(cfg, "architecture_name", getattr(cfg, "architecture", "mlp_fusion")).lower()
 if arch == "dialog_rnn":
     model = DialogRNNMLP(cfg)
 elif arch == "todkat_lite":
@@ -80,7 +80,7 @@ got_gru = hasattr(model, "gru_global") and any(
 print("Classifier grads? ", got_clf)
 if arch == "dialog_rnn":
     print("Global-GRU grads? ", got_gru)
-    assert got_gru, "No grads in your GRU—something’s still wired wrong."
+    assert got_gru, "No grads in your GRU—something's still wired wrong."
 
 # 8) GRU is doing something
 if hasattr(model, "gru_global"):

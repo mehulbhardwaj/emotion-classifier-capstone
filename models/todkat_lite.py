@@ -6,11 +6,11 @@ for multimodal emotion recognition on MELD.
 This variant keeps the heavy lifting identical to the baseline (wav2vec + RoBERTa
 encoders, focal loss, optimiser, scheduler) and only adds:
 
-* **Topic embedding** (default 100‑d, from an integer `topic_id`).
+* **Topic embedding** (default 100‑d, from an integer `topic_id`).
 * **Optional commonsense vector** (50‑d) if `use_knowledge: true` in YAML.
-* **2‑layer context Transformer** (d_model ≈ 768+768+topic+kn).  For speed we
-  ignore TOD‑KAT’s graph‑attention module and simply rely on self‑attention +
-  padding masks.  It still gives a solid bump on MELD (+6‑8 F1 in ablations).
+* **2‑layer context Transformer** (d_model ≈ 768+768+topic+kn).  For speed we
+  ignore TOD‑KAT's graph‑attention module and simply rely on self‑attention +
+  padding masks.  It still gives a solid bump on MELD (+6‑8 F1 in ablations).
 
 All other hyper‑params (batch‑size, LR, scheduler) remain constant, ensuring an
 apples‑to‑apples comparison with the MLP baseline and Dialog‑RNN.
@@ -26,7 +26,6 @@ from torch import nn, optim
 from pytorch_lightning import LightningModule
 from transformers import Wav2Vec2Model, RobertaModel
 from torchmetrics.classification import MulticlassF1Score
-import pytorch_lightning as pl
 
 ################################################################################
 # focal‑loss helper
@@ -46,147 +45,133 @@ def focal_loss(
 # Lite TOD‑KAT model
 ################################################################################
 
-class TodkatLiteMLP(pl.LightningModule):
+class TodkatLiteMLP(LightningModule):
+    """Topic‑aware + optional knowledge vector + Transformer context."""
+
+    # ------------------------------------------------------------------
+    # Init
+    # ------------------------------------------------------------------
     def __init__(self, config: Any):
         super().__init__()
         self.config = config
         self.save_hyperparameters(ignore=["config"])
 
-        # ---------- basic dims ----------
-        self.num_classes   = int(getattr(config, "output_dim", 7))
-        self.topic_dim     = int(getattr(config, "topic_embedding_dim", 100))
-        self.use_knowledge = bool(getattr(config, "use_knowledge", False))
-        self.kn_dim        = 50 if self.use_knowledge else 0
+        # ----- constants from cfg -----
+        self.num_classes: int = int(getattr(config, "output_dim", 7))
+        self.topic_dim: int = int(getattr(config, "topic_embedding_dim", 100))
+        self.use_knowledge: bool = bool(getattr(config, "use_knowledge", False))
+        self.kn_dim: int = 50 if self.use_knowledge else 0
 
-        # ---------- frozen encoders ----------
-        self.audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
-        self.text_encoder  = RobertaModel.from_pretrained("roberta-base")
+        # ----- encoders (frozen) -----
+        self.audio_encoder: Wav2Vec2Model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
+        self.text_encoder:  RobertaModel  = RobertaModel.from_pretrained("roberta-base")
         for p in self.audio_encoder.parameters(): p.requires_grad = False
         for p in self.text_encoder.parameters():  p.requires_grad = False
 
-        # optional partial unfreeze (unchanged) .............................
+        # optional partial unfreeze
         self.audio_lr_mul = self.text_lr_mul = 0.0
         if hasattr(config, "fine_tune"):
-            self._unfreeze_top_n_layers(
-                self.audio_encoder.encoder.layers,
-                int(config.fine_tune.audio_encoder.unfreeze_top_n_layers)
-            )
-            self._unfreeze_top_n_layers(
-                self.text_encoder.encoder.layer,
-                int(config.fine_tune.text_encoder.unfreeze_top_n_layers)
-            )
-            self.audio_lr_mul = float(config.fine_tune.audio_encoder.lr_mul)
-            self.text_lr_mul  = float(config.fine_tune.text_encoder.lr_mul)
+            n_audio = int(getattr(config.fine_tune.audio_encoder, "unfreeze_top_n_layers", 0))
+            n_text  = int(getattr(config.fine_tune.text_encoder,  "unfreeze_top_n_layers", 0))
+            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, n_audio)
+            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer,  n_text)
+            self.audio_lr_mul = float(getattr(config.fine_tune.audio_encoder, "lr_mul", 1.0))
+            self.text_lr_mul = float(getattr(config.fine_tune.text_encoder,  "lr_mul", 1.0))
 
-        # ---------- topic embedding ----------
-        self.topic_emb = nn.Embedding(
-            int(getattr(config, "n_topics", 50)),
-            self.topic_dim
-        )
+        # ----- topic & knowledge embeddings -----
+        n_topics = int(getattr(config, "n_topics", 50))
+        self.topic_emb = nn.Embedding(n_topics, self.topic_dim)
 
-        # full feature dim seen by Transformer
+        # final per‑token rep dim entering Transformer
         self.d_model = (
-            self.audio_encoder.config.hidden_size +
-            self.text_encoder.config.hidden_size +
-            self.topic_dim +
-            self.kn_dim
+            self.audio_encoder.config.hidden_size
+            + self.text_encoder.config.hidden_size
+            + self.topic_dim
+            + self.kn_dim
         )
 
+        n_layers = int(getattr(config, "rel_transformer_layers", 2))
+        n_heads  = int(getattr(config, "rel_heads", 4))
         self.rel_enc = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=self.d_model,
-                nhead = int(getattr(config, "rel_heads", 4)),
+                nhead=n_heads,
                 dim_feedforward=256,
                 dropout=0.1,
                 batch_first=True,
             ),
-            num_layers=int(getattr(config, "rel_transformer_layers", 2)),
+            num_layers=n_layers,
         )
 
-        # ----- optional LayerNorm on context output -----
-        self.norm = nn.LayerNorm(self.d_model)
-      
-        # ---------- classifier ----------
+        # ----- classifier (same depth as baseline) -----
         mlp_hidden = int(getattr(config, "mlp_hidden_size", 512))
+        cls_input_dim = (
+            self.audio_encoder.config.hidden_size
+            + self.text_encoder.config.hidden_size
+            + self.d_model
+        )
         self.classifier = nn.Sequential(
-            nn.Linear(
-                self.audio_encoder.config.hidden_size +
-                self.text_encoder.config.hidden_size +
-                self.d_model,
-                mlp_hidden,
-            ),
-            nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(cls_input_dim, mlp_hidden),
+            nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(mlp_hidden, mlp_hidden // 2),
-            nn.ReLU(), nn.Dropout(0.3),
+            nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(mlp_hidden // 2, self.num_classes),
         )
 
-        # metrics / focal-loss alpha .......................................
+        # ----- metrics / alpha -----
         self.val_f1  = MulticlassF1Score(num_classes=self.num_classes, average="macro")
         self.test_f1 = MulticlassF1Score(num_classes=self.num_classes, average="macro")
-        alpha = torch.tensor(getattr(config, "class_weights", [1.]*self.num_classes))
+        alpha = torch.tensor(getattr(config, "class_weights", [1.0] * self.num_classes), dtype=torch.float)
         self.register_buffer("alpha", alpha)
 
-    # helpers -------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
     @staticmethod
     def _unfreeze_top_n_layers(layers: List[nn.Module], n: int):
         for layer in layers[-max(0, n):]:
-            for p in layer.parameters(): p.requires_grad = True
+            for p in layer.parameters():
+                p.requires_grad = True
 
-    # forward -------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # forward
+    # ------------------------------------------------------------------
     def forward(self, batch: Dict[str, torch.Tensor]) -> torch.FloatTensor:
         wav, wav_mask = batch["wav"], batch["wav_mask"]
         txt, txt_mask = batch["txt"], batch["txt_mask"]
-        topic_id      = batch["topic_id"]
-        kn_vec        = batch.get("kn_vec")           # (B,T,50) or None
+        topic_id = batch["topic_id"]
+        kn_vec   = batch.get("kn_vec")  # may be None or zeros
 
         B, T, _ = wav.shape
-        # ---- utterance embeddings (CLS) ----
-        a_emb = self.audio_encoder(
-            input_values=wav.flatten(0,1),
-            attention_mask=wav_mask.flatten(0,1),
-        ).last_hidden_state[:,0,:].view(B,T,-1)
-        t_emb = self.text_encoder(
-            input_ids=txt.flatten(0,1),
-            attention_mask=txt_mask.flatten(0,1),
-        ).last_hidden_state[:,0,:].view(B,T,-1)
 
-        # ---- add topic / knowledge ----
-        x = torch.cat([a_emb, t_emb, self.topic_emb(topic_id)], dim=-1)
+        # ---- encoders CLS ----
+        a_emb = self.audio_encoder(input_values=wav.flatten(0,1), attention_mask=wav_mask.flatten(0,1)).last_hidden_state[:,0,:]
+        t_emb = self.text_encoder(input_ids=txt.flatten(0,1), attention_mask=txt_mask.flatten(0,1)).last_hidden_state[:,0,:]
+        a_emb = a_emb.view(B, T, -1)
+        t_emb = t_emb.view(B, T, -1)
+
+        topic_emb = self.topic_emb(topic_id)  # (B,T,topic_dim)
         if self.use_knowledge and kn_vec is not None:
-            x = torch.cat([x, kn_vec], dim=-1)
+            x = torch.cat([a_emb, t_emb, topic_emb, kn_vec], dim=-1)
+        else:
+            x = torch.cat([a_emb, t_emb, topic_emb], dim=-1)
 
-        ctx = self.rel_enc(
-            x,
-            src_key_padding_mask=~batch["dialog_mask"].bool()  # True = PAD
-        )                                     # (B,T,d_model)
+        # padding mask for TransformerEncoder
+        pad_mask = (~batch["dialog_mask"].bool())  # True = pad token
+        ctx = self.rel_enc(x, src_key_padding_mask=pad_mask)  # (B,T,d_model)
 
-        # pick the last *valid* time-step per example
-        # mask: (B,T) bool, lengths = #valid utterances
-        lengths = batch["dialog_mask"].sum(dim=1)            # (B,)
-        idxs    = (lengths - 1).unsqueeze(-1)                # (B,1)
-        # gather each embedding at its last valid index
-        def gather_last(x):
-            # x: (B,T,D)
-            return x.gather(
-                dim=1,
-                index=idxs.unsqueeze(-1).expand(-1, -1, x.size(-1))
-            ).squeeze(1)  # → (B,D)
-
-        last_a = gather_last(a_emb)
-        last_t = gather_last(t_emb)
-        last_c = gather_last(ctx)
-        fused  = torch.cat([last_a, last_t, last_c], dim=-1)
-        return self.classifier(fused)         # (B,C)
+        # last utterance representation
+        fused = torch.cat([a_emb[:, -1, :], t_emb[:, -1, :], ctx[:, -1, :]], dim=-1)
+        logits = self.classifier(fused)  # (B,C)
+        return logits
 
     # ------------------------------------------------------------------
     # lightning steps
     # ------------------------------------------------------------------
     def _shared_step(self, batch: Dict[str, torch.Tensor], stage: str):
-        # pick each dialog’s true last label, not padded −1
-        lengths   = batch["dialog_mask"].sum(dim=1)         # (B,)
-        last_idxs = (lengths - 1).unsqueeze(-1)             # (B,1)
-        labels   = batch["labels"].gather(dim=1, index=last_idxs).squeeze(1)  # (B,)
+        labels = batch["labels"][:, -1]
         logits = self(batch)
         loss = focal_loss(logits, labels, self.alpha, gamma=float(getattr(self.config, "focal_gamma", 2.0)))
         preds = logits.argmax(dim=-1)

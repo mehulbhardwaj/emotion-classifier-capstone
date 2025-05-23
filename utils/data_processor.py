@@ -1,4 +1,3 @@
-
 """utils/data_processor.py – dialogue‑level batching
 ====================================================
 Drop‑in replacement that
@@ -334,8 +333,8 @@ if __name__ == "__main__":
         
         print("MELD dataset downloaded and extracted successfully.")
         return data_dir
-    
-    
+
+
     def convert_mp4_to_wav(config, force=False):
         """Convert MP4 files to WAV format.
         
@@ -386,8 +385,8 @@ if __name__ == "__main__":
         
         print("MP4 to WAV conversion completed.")
         
-    
-    
+
+
     def prepare_hf_dataset(config, force=False):
         """Prepare Hugging Face dataset from MELD CSV files.
         
@@ -447,8 +446,8 @@ if __name__ == "__main__":
             print(f"Processed {split} split with {len(hf_dataset)} samples.")
         
         print("HuggingFace dataset preparation completed.")
-    
-    
+
+
     def get_class_distribution(hf_dataset_dir):
         """Get class distribution for each split.
         
@@ -481,5 +480,3 @@ if __name__ == "__main__":
                 print(f"Error getting class distribution for {split}: {e}")
         
         return result
-
-    pass
