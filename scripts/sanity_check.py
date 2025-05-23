@@ -57,12 +57,19 @@ assert B==1 and T<=4
 
 # 6) forward + backward
 logits = model(batch)
-mask   = batch.get("dialog_mask", torch.ones(B,T, dtype=torch.bool))
+# pick a loss that works generically:
 labels = batch["labels"]
-flat_logits = logits[mask].view(-1, cfg.output_dim)
-flat_labels = labels[mask].view(-1)
+if logits.ndim == 3:
+    # dialogue‐level model → (B,T,C)
+    mask = batch["dialog_mask"].bool()
+    flat_logits = logits[mask].view(-1, cfg.output_dim)
+    flat_labels = labels[mask].view(-1)
+else:
+    # utterance‐level model → (B,C)
+    flat_logits = logits                # (B,C)
+    flat_labels = labels[:, -1]         # take last turn
 loss = F.cross_entropy(flat_logits, flat_labels)
-print("Fast forward OK, loss =", loss.item())
+print("\nForward OK, loss =", loss.item())
 loss.backward()
 
 # 7) grads check
