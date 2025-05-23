@@ -208,26 +208,31 @@ class TodkatLiteMLP(LightningModule):
     # ------------------------------------------------------------------
     # optimiser & scheduler (mirrors baseline)
     # ------------------------------------------------------------------
+
     def configure_optimizers(self):
-        lr_base = float(self.config.learning
+        base_lr = float(self.config.learning_rate)
+        wd = float(getattr(self.config, "weight_decay", 1e-4))
 
-        weight_decay = float(getattr(self.config, "weight_decay", 1e-4))
+        groups: List[dict[str, Any]] = []
 
-        groups = []
         if any(p.requires_grad for p in self.audio_encoder.parameters()):
             groups.append({"params": [p for p in self.audio_encoder.parameters() if p.requires_grad],
-                           "lr": lr_base * self.audio_lr_mul})
+                           "lr": base_lr * self.audio_lr_mul})
         if any(p.requires_grad for p in self.text_encoder.parameters()):
             groups.append({"params": [p for p in self.text_encoder.parameters() if p.requires_grad],
-                           "lr": lr_base * self.text_lr_mul})
+                           "lr": base_lr * self.text_lr_mul})
 
-        groups.append({"params": list(self.topic_emb.parameters()) +
-                                  list(self.rel_enc.parameters()) +
-                                  list(self.classifier.parameters()),
-                       "lr": lr_base})
+        # Context + classifier always train
+        ctx_params = list(self.gru_global.parameters()) + \
+                     list(self.gru_speaker.parameters()) + \
+                     list(self.gru_emotion.parameters()) + \
+                     list(self.classifier.parameters())
+        groups.append({"params": ctx_params, "lr": base_lr})
 
-        opt = optim.AdamW(groups, weight_decay=weight_decay)
-        sch = optim.lr_scheduler.CosineAnnealingLR(opt,
-                                                   T_max=int(self.config.num_epochs),
-                                                   eta_min=float(getattr(self.config, "eta_min", 1e-7)))
-        return [opt], [sch]
+        optimizer = optim.AdamW(groups, weight_decay=wd)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=int(self.config.num_epochs),
+            eta_min=float(getattr(self.config, "eta_min", 1e-7)),
+        )
+        return [optimizer], [scheduler]
