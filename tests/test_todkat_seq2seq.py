@@ -56,7 +56,7 @@ def test_todkat_shapes():
     config = Config()
     config.architecture_name = "todkat_lite"
     config.output_dim = 7
-    config.topic_embedding_dim = 100
+    config.topic_embedding_dim = 128
     config.n_topics = 50
     config.rel_transformer_layers = 2
     config.rel_heads = 4
@@ -94,10 +94,10 @@ def test_causal_masking():
     config = Config()
     config.architecture_name = "todkat_lite"
     config.output_dim = 7
-    config.topic_embedding_dim = 10  # Smaller for testing
+    config.topic_embedding_dim = 128  # Use 128 for clean divisibility
     config.n_topics = 5
     config.rel_transformer_layers = 1  # Single layer for easier testing
-    config.rel_heads = 1
+    config.rel_heads = 4  # 1664 ÷ 4 = 416
     config.use_knowledge = False  # Disable for simpler testing
     
     model = TodkatLiteMLP(config)
@@ -128,7 +128,7 @@ def test_training_step():
     config = Config()
     config.architecture_name = "todkat_lite"
     config.output_dim = 7
-    config.topic_embedding_dim = 100
+    config.topic_embedding_dim = 128
     config.n_topics = 50
     config.rel_transformer_layers = 2
     config.rel_heads = 4
@@ -169,10 +169,10 @@ def test_data_efficiency():
     config = Config()
     config.architecture_name = "todkat_lite"
     config.output_dim = 7
-    config.topic_embedding_dim = 50
+    config.topic_embedding_dim = 128
     config.n_topics = 50
     config.rel_transformer_layers = 1
-    config.rel_heads = 2
+    config.rel_heads = 4
     config.use_knowledge = False
     config.focal_gamma = 2.0
     config.class_weights = [1.0] * 7

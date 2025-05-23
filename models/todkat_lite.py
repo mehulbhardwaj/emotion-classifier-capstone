@@ -91,6 +91,11 @@ class TodkatLiteMLP(LightningModule):
             + self.topic_dim
             + self.kn_dim
         )
+        
+        print(f"DEBUG: d_model={self.d_model}, n_heads={int(getattr(config, 'rel_heads', 4))}")
+        print(f"DEBUG: audio_dim={self.audio_encoder.config.hidden_size}, text_dim={self.text_encoder.config.hidden_size}")
+        print(f"DEBUG: topic_dim={self.topic_dim}, kn_dim={self.kn_dim}")
+        print(f"DEBUG: d_model % n_heads = {self.d_model % int(getattr(config, 'rel_heads', 4))}")
 
         n_layers = int(getattr(config, "rel_transformer_layers", 2))
         n_heads  = int(getattr(config, "rel_heads", 4))

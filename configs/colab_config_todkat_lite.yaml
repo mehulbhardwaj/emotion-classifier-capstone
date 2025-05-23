@@ -13,7 +13,7 @@ data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
 
 # Model architecture settings
 output_dim: 7
-topic_embedding_dim: 100
+topic_embedding_dim: 128
 n_topics: 50
 rel_transformer_layers: 2
 rel_heads: 4
