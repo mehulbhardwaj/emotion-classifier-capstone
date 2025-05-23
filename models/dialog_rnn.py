@@ -1,26 +1,30 @@
-"""Dialog‑RNN–style context model for multimodal ERC (MELD).
+"""dialog_rnn.py
+================================
+Speaker‑aware Dialog‑RNN for multimodal emotion recognition (MELD).
 
-Encoders  : Wav2Vec 2.0 + DistilRoBERTa  (frozen or partially fine‑tuned)
-Context   : Three GRUs tracking global, speaker, and emotion states
-Fusion    : [utterance_emb | global | speaker | emotion] → MLP → logits
-Loss      : Focal loss with class‑imbalance weights
+* **Encoders**  : Wav2Vec 2.0 + RoBERTa (frozen by default, optional top‑N unfreeze).
+* **Context**    : Three GRUs — global, speaker‑specific, emotion — as in Majumder et al. (2019).
+* **Fusion**     : `[u_t | g_t | s_t | e_t] → 2‑layer MLP → logits` (identical head dims to baseline).
+* **Loss**       : Focal loss with per‑class weights.
 
-Expected batch dict keys (shapes in brackets):
-    wav            – (B, T, L_a)  raw audio waveforms (float32)
-    wav_mask       – (B, T, L_a)  attention mask for audio encoder
-    txt            – (B, T, L_t)  token IDs (int64)
-    txt_mask       – (B, T, L_t)  text attention mask
-    speaker_id     – (B, T)       integer speaker IDs, pad=-1
-    dialog_mask    – (B, T)       1 = valid utterance, 0 = pad
-    labels         – (B, T)       gold emotion labels (int64)
-
-If you feed isolated utterances (T = 1) the model degrades gracefully and
-behaves like the MLP baseline.
+Required batch keys
+-------------------
+```
+wav         (B, T, L_a)      float32   – raw audio     (16 kHz)
+wav_mask    (B, T, L_a)      int64     – padding mask for audio encoder (1 = keep)
+txt         (B, T, L_t)      int64     – token IDs
+txt_mask    (B, T, L_t)      int64     – text padding mask (1 = keep)
+speaker_id  (B, T)           int64     – speaker index, −1 for PAD
+dialog_mask (B, T)           int64     – 1 = valid utterance, 0 = PAD
+labels      (B, T)           int64     – gold emotions
+```
+All shapes are *dialogue‑level* (time‑axis **T**).  Utterance‑only batches still work with `T=1`.
 """
 
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any, Dict, List, Tuple
+
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
@@ -28,9 +32,9 @@ from pytorch_lightning import LightningModule
 from transformers import Wav2Vec2Model, RobertaModel
 from torchmetrics.classification import MulticlassF1Score
 
-# ---------------------------------------------------------------------------
-# Focal‑loss helper
-# ---------------------------------------------------------------------------
+################################################################################
+# Loss helper
+################################################################################
 
 def focal_loss(
     logits: torch.FloatTensor,
@@ -38,147 +42,160 @@ def focal_loss(
     alpha: torch.FloatTensor,
     gamma: float = 2.0,
 ) -> torch.FloatTensor:
+    """Compute focal loss (multiclass, per‑class alpha)."""
     ce = F.cross_entropy(logits, targets, weight=alpha, reduction="none")
     pt = torch.exp(-ce)
     return ((1.0 - pt) ** gamma * ce).mean()
 
-# ---------------------------------------------------------------------------
+################################################################################
 # Dialog‑RNN model
-# ---------------------------------------------------------------------------
+################################################################################
 
 class DialogRNNMLP(LightningModule):
-    """Speaker‑aware DialogRNN with the same encoders/head as the baseline."""
+    """Dialog‑RNN with multimodal encoders + MLP classifier."""
 
-    # ------------------------------------------------------------------
-    #  init
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # Init
+    # ---------------------------------------------------------------------
     def __init__(self, config: Any):
         super().__init__()
         self.config = config
         self.save_hyperparameters(ignore=["config"])
 
-        out_dim = int(getattr(self.config, "output_dim", 7))
-        hid_gru = int(getattr(self.config, "gru_hidden_size", 128))
+        # ---------------- constants from cfg ----------------
+        self.num_classes: int = int(getattr(config, "output_dim", 7))
+        self.hidden_gru: int = int(getattr(config, "gru_hidden_size", 128))
+        self.context_window: int = int(getattr(config, "context_window", 0))
 
-        # Encoders ----------------------------------------------------------------
+        # ---------------- encoders --------------------------
         self.audio_encoder: Wav2Vec2Model = Wav2Vec2Model.from_pretrained(
             "facebook/wav2vec2-base-960h"
         )
         self.text_encoder: RobertaModel = RobertaModel.from_pretrained("roberta-base")
 
+        # Freeze all layers — we may selectively unfreeze below
         for p in self.audio_encoder.parameters():
             p.requires_grad = False
         for p in self.text_encoder.parameters():
             p.requires_grad = False
 
-        # Optional fine‑tuning -----------------------------------------------------
-        if hasattr(self.config, "fine_tune"):
-            n_audio = int(getattr(self.config.fine_tune.audio_encoder, "unfreeze_top_n_layers", 0))
-            n_text = int(getattr(self.config.fine_tune.text_encoder, "unfreeze_top_n_layers", 0))
+        # Optional partial unfreeze
+        self.audio_lr_mul, self.text_lr_mul = 0.0, 0.0
+        if hasattr(config, "fine_tune"):
+            n_audio = int(getattr(config.fine_tune.audio_encoder, "unfreeze_top_n_layers", 0))
+            n_text = int(getattr(config.fine_tune.text_encoder, "unfreeze_top_n_layers", 0))
             self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, n_audio)
             self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, n_text)
-            self.audio_lr_mul = float(getattr(self.config.fine_tune.audio_encoder, "lr_mul", 1.0))
-            self.text_lr_mul = float(getattr(self.config.fine_tune.text_encoder, "lr_mul", 1.0))
-        else:
-            self.audio_lr_mul = 0.0
-            self.text_lr_mul = 0.0
+            self.audio_lr_mul = float(getattr(config.fine_tune.audio_encoder, "lr_mul", 1.0))
+            self.text_lr_mul = float(getattr(config.fine_tune.text_encoder, "lr_mul", 1.0))
 
-        # Context GRUs -------------------------------------------------------------
-        enc_dim = self.audio_encoder.config.hidden_size + self.text_encoder.config.hidden_size
-        self.gru_global  = nn.GRU(enc_dim, hid_gru, batch_first=True)
-        self.gru_speaker = nn.GRU(enc_dim, hid_gru, batch_first=True)
-        self.gru_emotion = nn.GRU(enc_dim, hid_gru, batch_first=True)
+        # Dimensionalities --------------------------------------------------
+        self.enc_dim: int = (
+            self.audio_encoder.config.hidden_size + self.text_encoder.config.hidden_size
+        )
 
-        # Classification head ------------------------------------------------------
-        mlp_hidden = int(getattr(self.config, "mlp_hidden_size", 512))
+        # Context GRUs ------------------------------------------------------
+        self.gru_global = nn.GRU(self.enc_dim, self.hidden_gru, batch_first=True)
+        self.gru_speaker = nn.GRU(self.enc_dim, self.hidden_gru, batch_first=True)
+        self.gru_emotion = nn.GRU(self.enc_dim, self.hidden_gru, batch_first=True)
+
+        # Classification head ----------------------------------------------
+        mlp_hidden = int(getattr(config, "mlp_hidden_size", 512))
         self.classifier = nn.Sequential(
-            nn.Linear(enc_dim + 3 * hid_gru, mlp_hidden),
+            nn.Linear(self.enc_dim + 3 * self.hidden_gru, mlp_hidden),
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(mlp_hidden, mlp_hidden // 2),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(mlp_hidden // 2, out_dim),
+            nn.Linear(mlp_hidden // 2, self.num_classes),
         )
 
-        # Metrics & loss buffers ---------------------------------------------------
-        self.val_f1  = MulticlassF1Score(num_classes=out_dim, average="macro")
-        self.test_f1 = MulticlassF1Score(num_classes=out_dim, average="macro")
+        # Metrics / focal‑loss alpha ---------------------------------------
+        self.val_f1 = MulticlassF1Score(num_classes=self.num_classes, average="macro")
+        self.test_f1 = MulticlassF1Score(num_classes=self.num_classes, average="macro")
 
-        alpha = torch.tensor(getattr(self.config, "class_weights", [1.0] * out_dim), dtype=torch.float)
+        alpha = torch.tensor(
+            getattr(config, "class_weights", [1.0] * self.num_classes), dtype=torch.float
+        )
         self.register_buffer("alpha", alpha)
 
     # ------------------------------------------------------------------
-    #  Helpers
+    # Helper functions
     # ------------------------------------------------------------------
     @staticmethod
-    def _unfreeze_top_n_layers(layer_list: List[nn.Module], n_layers: int) -> None:
-        for layer in layer_list[-max(0, n_layers):]:
+    def _unfreeze_top_n_layers(layers: List[nn.Module], n: int) -> None:
+        for layer in layers[-max(0, n) :]:
             for p in layer.parameters():
                 p.requires_grad = True
 
     @staticmethod
-    def _mask_by_speaker(x: torch.Tensor, speaker: torch.Tensor) -> torch.Tensor:
-        """Organise utterance embeddings so that each speaker has a contiguous sequence.
-        The simple trick from the original DialogRNN: duplicate the global sequence
-        and zero out positions spoken by other speakers.
+    def _mask_same_speaker(u: torch.Tensor, speaker: torch.Tensor) -> torch.Tensor:
+        """Return tensor where each position *t* contains only features spoken by the
+        same speaker as at *t* (others are zero), keeping temporal order.
+        Vectorised: avoids Python loops.  Shape preserved (B,T,D).
         """
-        B, T, D = x.shape
-        out = torch.zeros_like(x)
-        for b in range(B):
-            for t in range(T):
-                spk = speaker[b, t]
-                if spk >= 0:  # skip padded positions
-                    out[b, t, :] = x[b, t, :]
-        return out
+        # speaker: (B,T) with –1 pads → set pads to large unique id so comparison yields False.
+        spk = speaker.clone()
+        spk[spk < 0] = 10_000  # unlikely high id
+        # Broadcast compare – result (B,T,T)
+        same = spk.unsqueeze(2) == spk.unsqueeze(1)  # (B,T,T)
+        u_masked = torch.einsum("bij,bjd->bid", same.float(), u)
+        return u_masked
 
     # ------------------------------------------------------------------
-    #  Forward pass
+    # Forward
     # ------------------------------------------------------------------
-    def forward(self, batch: dict[str, torch.Tensor]) -> torch.FloatTensor:
-        wav, wav_mask = batch["wav"], batch["wav_mask"]   # (B,T,L_a)
-        txt, txt_mask = batch["txt"], batch["txt_mask"]   # (B,T,L_t)
+    def forward(self, batch: Dict[str, torch.Tensor]) -> torch.FloatTensor:
+        wav, wav_mask = batch["wav"], batch["wav_mask"]
+        txt, txt_mask = batch["txt"], batch["txt_mask"]
+        speaker_id = batch["speaker_id"]
 
         B, T, _ = wav.shape
-        wav = wav.flatten(0, 1)          # (B*T, L_a)
-        wav_mask = wav_mask.flatten(0, 1)
-        txt = txt.flatten(0, 1)          # (B*T, L_t)
-        txt_mask = txt_mask.flatten(0, 1)
 
-        # Encoders -------------------------------------------------------
-        a_out = self.audio_encoder(input_values=wav, attention_mask=wav_mask).last_hidden_state  # (B*T, L_a', H_a)
-        a_emb = a_out[:, 0, :]  # CLS‑like summary
+        # Flatten utterances → run encoders → CLS embeddings
+        a_emb = self.audio_encoder(
+            input_values=wav.flatten(0, 1),
+            attention_mask=wav_mask.flatten(0, 1),
+        ).last_hidden_state[:, 0, :]
+        t_emb = self.text_encoder(
+            input_ids=txt.flatten(0, 1),
+            attention_mask=txt_mask.flatten(0, 1),
+        ).last_hidden_state[:, 0, :]
+        u = torch.cat([a_emb, t_emb], dim=-1).view(B, T, -1)  # (B,T,D)
 
-        t_out = self.text_encoder(input_ids=txt, attention_mask=txt_mask).last_hidden_state  # (B*T, L_t', H_t)
-        t_emb = t_out[:, 0, :]
+        # Truncate history if context_window > 0
+        if self.context_window > 0 and T > self.context_window:
+            u = u[:, -self.context_window :, :]
+            speaker_id = speaker_id[:, -self.context_window :]
 
-        u = torch.cat([a_emb, t_emb], dim=-1).view(B, T, -1)  # (B, T, D)
+        # GRU context
+        g_out, _ = self.gru_global(u)
+        s_inp = self._mask_same_speaker(u, speaker_id)
+        s_out, _ = self.gru_speaker(s_inp)
+        e_out, _ = self.gru_emotion(u)
 
-        # Context GRUs ---------------------------------------------------
-        global_out, _  = self.gru_global(u)
-        speaker_inp = self._mask_by_speaker(u, batch["speaker_id"])
-        speaker_out, _ = self.gru_speaker(speaker_inp)
-        emotion_out, _ = self.gru_emotion(u)
-
-        h = torch.cat([u, global_out, speaker_out, emotion_out], dim=-1)
-        logits = self.classifier(h)  # (B, T, C)
+        h = torch.cat([u, g_out, s_out, e_out], dim=-1)
+        logits = self.classifier(h)  # (B,T,C)
         return logits
 
     # ------------------------------------------------------------------
-    #  Lightning steps
+    # Lightning steps
     # ------------------------------------------------------------------
-    def _shared_step(self, batch: dict[str, torch.Tensor], stage: str):
-        dialog_mask = batch["dialog_mask"]  # (B, T)
+    def _shared_step(self, batch: Dict[str, torch.Tensor], stage: str) -> torch.Tensor:
+        mask = batch["dialog_mask"].bool()
         labels = batch["labels"]
 
-        logits = self(batch)  # (B, T, C)
-
-        # Flatten valid positions only
-        mask = dialog_mask.bool()
+        logits = self(batch)
         logits_flat = logits[mask]
         labels_flat = labels[mask]
 
-        loss = focal_loss(logits_flat, labels_flat, alpha=self.alpha, gamma=getattr(self.config, "focal_gamma", 2.0))
+        loss = focal_loss(
+            logits_flat,
+            labels_flat,
+            self.alpha,
+            gamma=float(getattr(self.config, "focal_gamma", 2.0)),
+        )
         preds = logits_flat.argmax(dim=-1)
 
         if stage == "train":
