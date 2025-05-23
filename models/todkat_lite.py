@@ -1,4 +1,4 @@
-"""MLP Fusion model for emotion classification.
+"""Dialog RNN model for emotion classification.
 
 A simplified implementation that fuses audio and text features using a simple MLP.
 """
@@ -27,7 +27,7 @@ def focal_loss(logits: torch.FloatTensor,
     pt = torch.exp(-ce)
     return ((1 - pt) ** gamma * ce).mean()
                    
-class TodkatLite(LightningModule):
+class TodkatLiteMLP(LightningModule):
     """Wav2Vec2 + RoBERTa → feature concat → MLP classifier.
 
     Supports:
