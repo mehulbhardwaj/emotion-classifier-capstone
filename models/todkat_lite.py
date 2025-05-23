@@ -3,14 +3,16 @@
 A *lite* adaptation of TOD‑KAT (Topic‑Driven & Knowledge‑Aware Transformer)
 for multimodal emotion recognition on MELD.
 
-This variant keeps the heavy lifting identical to the baseline (wav2vec + RoBERTa
-encoders, focal loss, optimiser, scheduler) and only adds:
+This implementation follows the original TOD-KAT approach of sequence-to-sequence
+emotion prediction: given utterances x₁, x₂, ..., xₙ, predict emotion labels 
+y₁, y₂, ..., yₙ one by one, using only past context at each step.
 
+The model uses:
 * **Topic embedding** (default 100‑d, from an integer `topic_id`).
 * **Optional commonsense vector** (50‑d) if `use_knowledge: true` in YAML.
-* **2‑layer context Transformer** (d_model ≈ 768+768+topic+kn).  For speed we
-  ignore TOD‑KAT's graph‑attention module and simply rely on self‑attention +
-  padding masks.  It still gives a solid bump on MELD (+6‑8 F1 in ablations).
+* **Causal Transformer encoder** (d_model ≈ 768+768+topic+kn) with masking
+  to ensure each position only attends to previous positions.
+* **Sequence-to-sequence prediction** for all utterances in dialogue.
 
 All other hyper‑params (batch‑size, LR, scheduler) remain constant, ensuring an
 apples‑to‑apples comparison with the MLP baseline and Dialog‑RNN.
@@ -158,53 +160,66 @@ class TodkatLiteMLP(LightningModule):
         else:
             x = torch.cat([a_emb, t_emb, topic_emb], dim=-1)
 
-        # padding mask for TransformerEncoder
-        pad_mask = (~batch["dialog_mask"].bool())  # True = pad token
-        ctx = self.rel_enc(x, src_key_padding_mask=pad_mask)  # (B,T,d_model)
+        # padding mask for TransformerEncoder (True = pad token)
+        pad_mask = (~batch["dialog_mask"].bool())
+        
+        # Create causal mask for autoregressive prediction
+        # Each position can only attend to previous positions (including itself)
+        seq_len = T
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device), diagonal=1).bool()
+        
+        # Apply context encoding with causal masking
+        ctx = self.rel_enc(x, src_key_padding_mask=pad_mask, mask=causal_mask)  # (B,T,d_model)
 
-        # last utterance representation
-        fused = torch.cat([a_emb[:, -1, :], t_emb[:, -1, :], ctx[:, -1, :]], dim=-1)
-        logits = self.classifier(fused)  # (B,C)
+        # Predict emotion for each utterance position using context + original embeddings
+        # Concatenate: [audio_emb, text_emb, context] for each position
+        fused = torch.cat([a_emb, t_emb, ctx], dim=-1)  # (B,T,cls_input_dim)
+        logits = self.classifier(fused)  # (B,T,C)
         return logits
 
     # ------------------------------------------------------------------
     # lightning steps
     # ------------------------------------------------------------------
     def _shared_step(self, batch: Dict[str, torch.Tensor], stage: str):
-        # TOD-KAT predicts only the last utterance emotion in a dialog
-        labels = batch["labels"][:, -1]  # (B,)
-        logits = self(batch)  # (B, C)
+        # TOD-KAT predicts emotions for all utterances in sequence-to-sequence manner
+        mask = batch["dialog_mask"].bool()  # (B, T) - True for valid utterances
+        labels = batch["labels"]  # (B, T)
+        logits = self(batch)  # (B, T, C)
         
-        # Debug: Check for invalid labels
-        if torch.any(labels < 0) or torch.any(labels >= self.num_classes):
+        # Flatten valid utterances only (remove padding)
+        logits_flat = logits[mask]  # (N_valid, C)
+        labels_flat = labels[mask]  # (N_valid,)
+        
+        # Check for invalid labels in the flattened valid utterances
+        if torch.any(labels_flat < 0) or torch.any(labels_flat >= self.num_classes):
             print(f"⚠️  Invalid labels detected in {stage}:")
-            print(f"   Labels range: {labels.min().item()} to {labels.max().item()}")
+            print(f"   Labels range: {labels_flat.min().item()} to {labels_flat.max().item()}")
             print(f"   Expected range: 0 to {self.num_classes-1}")
-            print(f"   Invalid labels: {labels[torch.logical_or(labels < 0, labels >= self.num_classes)]}")
+            print(f"   Invalid labels: {labels_flat[torch.logical_or(labels_flat < 0, labels_flat >= self.num_classes)]}")
             
-            # Filter out invalid labels
-            valid_mask = torch.logical_and(labels >= 0, labels < self.num_classes)
-            if not torch.any(valid_mask):
+            # Filter out invalid labels among the valid utterances
+            valid_label_mask = torch.logical_and(labels_flat >= 0, labels_flat < self.num_classes)
+            if not torch.any(valid_label_mask):
                 print("❌ No valid labels in batch, skipping...")
                 return torch.tensor(0.0, device=logits.device, requires_grad=True)
             
-            labels = labels[valid_mask]
-            logits = logits[valid_mask]
-            print(f"   Using {valid_mask.sum().item()}/{valid_mask.shape[0]} valid samples")
+            labels_flat = labels_flat[valid_label_mask]
+            logits_flat = logits_flat[valid_label_mask]
+            print(f"   Using {valid_label_mask.sum().item()}/{valid_label_mask.shape[0]} valid utterances")
         
-        loss = focal_loss(logits, labels, self.alpha, gamma=float(getattr(self.config, "focal_gamma", 2.0)))
-        preds = logits.argmax(dim=-1)
+        loss = focal_loss(logits_flat, labels_flat, self.alpha, gamma=float(getattr(self.config, "focal_gamma", 2.0)))
+        preds = logits_flat.argmax(dim=-1)
 
         if stage == "train":
             self.log("train_loss", loss, prog_bar=True)
         elif stage == "val":
-            self.val_f1.update(preds, labels)
+            self.val_f1.update(preds, labels_flat)
             self.log("val_loss", loss, prog_bar=True)
-            self.log("val_acc", (preds == labels).float().mean(), prog_bar=True)
+            self.log("val_acc", (preds == labels_flat).float().mean(), prog_bar=True)
         else:
-            self.test_f1.update(preds, labels)
+            self.test_f1.update(preds, labels_flat)
             self.log("test_loss", loss)
-            self.log("test_acc", (preds == labels).float().mean())
+            self.log("test_acc", (preds == labels_flat).float().mean())
         return loss
 
     def training_step(self, batch, batch_idx):
