@@ -24,15 +24,36 @@ class MELDDataset(Dataset):
         
         self.config = config
         self.split = split
-        self.data_dir = Path(config.data_dir)
-        self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
         
-        print(f"   Data directory: {self.data_dir}")
+        # Use data_root if available, otherwise fall back to data_dir
+        if hasattr(config, 'data_root'):
+            self.data_dir = Path(config.data_root) / "raw"
+            print(f"   Using data_root: {config.data_root}")
+        else:
+            self.data_dir = Path(config.data_dir)
+            print(f"   Using data_dir: {config.data_dir}")
+        
+        print(f"   Final data directory: {self.data_dir}")
+        
+        self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
         print(f"   Split: {split}")
         
         # Load metadata
-        self.metadata = pd.read_csv(self.data_dir / f"{split}_sent_emo.csv")
-        print(f"   Loaded metadata: {len(self.metadata)} samples")
+        metadata_path = self.data_dir / f"{split}_sent_emo.csv"
+        print(f"   Looking for metadata at: {metadata_path}")
+        
+        if not metadata_path.exists():
+            print(f"   ❌ Metadata file not found: {metadata_path}")
+            print(f"   📁 Contents of {self.data_dir}:")
+            if self.data_dir.exists():
+                for item in self.data_dir.iterdir():
+                    print(f"      {item.name}")
+            else:
+                print(f"      Directory does not exist!")
+            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+        
+        self.metadata = pd.read_csv(metadata_path)
+        print(f"   ✅ Loaded metadata: {len(self.metadata)} samples")
         
         # Emotion mapping
         self.emotion_map = {
@@ -91,6 +112,7 @@ class MELDDataset(Dataset):
         # Group by dialogue
         dialogs = {}
         audio_dir = self.data_dir / f"{self.split}_audio"
+        print(f"   Audio directory: {audio_dir}")
         
         for idx, row in self.metadata.iterrows():
             dia_id = row['Dialogue_ID']

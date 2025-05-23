@@ -18,12 +18,19 @@ class Config:
         self.architecture_name = kwargs.get("architecture_name", "mlp_fusion")
         print(f"   Set architecture_name: '{self.architecture_name}' (type: {type(self.architecture_name)})")
         
-        # Data settings
-        self.data_dir = kwargs.get("data_dir", "data/MELD")
+        # Data settings - handle both data_dir and data_root
+        if "data_root" in kwargs:
+            self.data_root = kwargs["data_root"]
+            self.data_dir = kwargs.get("data_dir", "data/MELD")  # Keep as fallback
+            print(f"   Using data_root: {self.data_root}")
+        else:
+            self.data_dir = kwargs.get("data_dir", "data/MELD")
+            print(f"   Using data_dir: {self.data_dir}")
+        
         self.output_dim = kwargs.get("output_dim", 7)
         self.batch_size = kwargs.get("batch_size", 4)
         self.max_sequence_length = kwargs.get("max_sequence_length", 20)
-        print(f"   Data settings: data_dir={self.data_dir}, output_dim={self.output_dim}")
+        print(f"   Data settings: output_dim={self.output_dim}")
         print(f"   Batch settings: batch_size={self.batch_size}, max_seq_len={self.max_sequence_length}")
         
         # Training settings
