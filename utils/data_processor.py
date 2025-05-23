@@ -79,10 +79,12 @@ class MELDDataset(Dataset):
 
         # ── labels & meta -----------------------------------------------------
         out["labels"]      = torch.tensor(row["label"], dtype=torch.long)
-        out["dialogue_id"] = int(row["Dialogue_ID" ])
-        out["utt_id"]      = int(row["Utterance_ID"])
+                did = row.get("Dialogue_ID", row.get("dialogue_id"))
+        out["dialogue_id"] = int(did) if did is not None else -1
+                uid = row.get("Utterance_ID", row.get("utterance_id", 0))
+        out["utt_id"] = int(uid)
                 # map speaker string → stable integer id
-        sid = row["Speaker"]
+                sid = row.get("Speaker", row.get("speaker", "UNK"))
         if not hasattr(self, "_spkmap"):
             self._spkmap = {}
         if sid not in self._spkmap:
