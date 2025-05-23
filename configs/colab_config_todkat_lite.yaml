@@ -15,8 +15,9 @@ data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
 output_dim: 7
 topic_embedding_dim: 32
 n_topics: 50
-rel_transformer_layers: 1
+rel_transformer_layers: 2
 rel_heads: 4
+projection_dim: 128
 mlp_hidden_size: 512
 mlp_dropout_rate: 0.3
 use_knowledge: true

@@ -210,7 +210,7 @@ class MELDDataModule(pl.LightningDataModule):
             dmask.append(pad2T(z,0))
             # ---- extras for TOD-KAT ----
             tid.append(pad2T(torch.zeros_like(l),0))                # topic-id all 0
-            knv.append(pad2T(torch.zeros(l.size(0),16),0.0))        # kn vec zeros (reduced to 16-dim)
+            knv.append(pad2T(torch.zeros(l.size(0),16),0.0))        # kn vec zeros (16-dim for TOD-KAT)
 
         return {
             "wav":         torch.stack(wavs),

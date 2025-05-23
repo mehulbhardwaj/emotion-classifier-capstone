@@ -84,10 +84,16 @@ class TodkatLiteMLP(LightningModule):
         n_topics = int(getattr(config, "n_topics", 50))
         self.topic_emb = nn.Embedding(n_topics, self.topic_dim)
 
-        # final per‑token rep dim entering Transformer
+        # ----- ADD PROJECTION LAYERS TO REDUCE d_model -----
+        # Project high-dimensional features to smaller dimensions
+        projection_dim = int(getattr(config, "projection_dim", 128))
+        self.audio_proj = nn.Linear(self.audio_encoder.config.hidden_size, projection_dim)
+        self.text_proj = nn.Linear(self.text_encoder.config.hidden_size, projection_dim)
+        
+        # final per‑token rep dim entering Transformer (much smaller!)
         self.d_model = (
-            self.audio_encoder.config.hidden_size
-            + self.text_encoder.config.hidden_size
+            projection_dim  # projected audio
+            + projection_dim  # projected text  
             + self.topic_dim
             + self.kn_dim
         )
@@ -108,9 +114,9 @@ class TodkatLiteMLP(LightningModule):
         # ----- classifier (same depth as baseline) -----
         mlp_hidden = int(getattr(config, "mlp_hidden_size", 512))
         cls_input_dim = (
-            self.audio_encoder.config.hidden_size
-            + self.text_encoder.config.hidden_size
-            + self.d_model
+            projection_dim  # projected audio
+            + projection_dim  # projected text
+            + self.d_model  # transformer context
         )
         self.classifier = nn.Sequential(
             nn.Linear(cls_input_dim, mlp_hidden),
@@ -159,11 +165,15 @@ class TodkatLiteMLP(LightningModule):
         a_emb = a_emb.view(B, T, -1)
         t_emb = t_emb.view(B, T, -1)
 
+        # ---- PROJECT TO SMALLER DIMENSIONS ----
+        a_proj = self.audio_proj(a_emb)  # (B, T, projection_dim)
+        t_proj = self.text_proj(t_emb)   # (B, T, projection_dim)
+
         topic_emb = self.topic_emb(topic_id)  # (B,T,topic_dim)
         if self.use_knowledge and kn_vec is not None:
-            x = torch.cat([a_emb, t_emb, topic_emb, kn_vec], dim=-1)
+            x = torch.cat([a_proj, t_proj, topic_emb, kn_vec], dim=-1)
         else:
-            x = torch.cat([a_emb, t_emb, topic_emb], dim=-1)
+            x = torch.cat([a_proj, t_proj, topic_emb], dim=-1)
 
         # padding mask for TransformerEncoder (True = pad token)
         pad_mask = (~batch["dialog_mask"].bool())
@@ -178,7 +188,7 @@ class TodkatLiteMLP(LightningModule):
 
         # Predict emotion for each utterance position using context + original embeddings
         # Concatenate: [audio_emb, text_emb, context] for each position
-        fused = torch.cat([a_emb, t_emb, ctx], dim=-1)  # (B,T,cls_input_dim)
+        fused = torch.cat([a_proj, t_proj, ctx], dim=-1)  # (B,T,cls_input_dim)
         logits = self.classifier(fused)  # (B,T,C)
         return logits
 
