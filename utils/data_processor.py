@@ -232,6 +232,8 @@ class MELDDataModule(pl.LightningDataModule):
         ds = self.ds[split]
 
         sampler = None
+        arch = getattr(self.cfg, "architecture", "").lower()
+      
         if split == "train" and arch not in {"dialog_rnn","todkat_lite"}:
             # only do utterance‐level balancing for MLP baseline
             y = torch.tensor(ds.ds["label"])
@@ -239,7 +241,7 @@ class MELDDataModule(pl.LightningDataModule):
             sampler, shuffle = WeightedRandomSampler(w, len(w), replacement=True), False
 
 
-        arch = getattr(self.cfg, "architecture", "").lower()
+        
         if arch in {"dialog_rnn", "todkat_lite"}:
             # build mapping from Dialogue_ID → list of dataset indices
             mapping: Dict[int, List[int]] = defaultdict(list)
