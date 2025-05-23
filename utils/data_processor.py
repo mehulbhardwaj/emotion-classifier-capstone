@@ -211,7 +211,7 @@ class MELDDataModule(pl.LightningDataModule):
         if arch in {"dialog_rnn", "todkat_lite"}:
             collate = self._collate_dialog
         else:
-            collate = lambda b: self._to_5tuple(ds.collate_fn(b))
+            collate = self._to_5tuple
 
         return DataLoader(
             ds,
@@ -429,9 +429,3 @@ if __name__ == "__main__":
         return result
 
     pass
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 3. Utility functions to download the MELD dataset from HF
-# ──────────────────────────────────────────────────────────────────────────────
-
