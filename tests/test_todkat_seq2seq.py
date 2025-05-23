@@ -36,13 +36,15 @@ def create_test_batch(batch_size=2, seq_len=5, audio_len=1000, text_len=20):
     # Dialog mask: True for valid utterances, False for padding
     dialog_mask = torch.zeros(batch_size, seq_len, dtype=torch.bool)
     dialog_mask[0, :3] = True  # First dialogue has 3 valid utterances
-    dialog_mask[1, :4] = True  # Second dialogue has 4 valid utterances
+    if batch_size > 1:
+        dialog_mask[1, :4] = True  # Second dialogue has 4 valid utterances (if it exists)
     batch["dialog_mask"] = dialog_mask
     
     # Labels: valid emotions (0-6) for valid utterances, -1 for padding
     labels = torch.full((batch_size, seq_len), -1, dtype=torch.long)
     labels[0, :3] = torch.randint(0, 7, (3,))  # Valid labels for first dialogue
-    labels[1, :4] = torch.randint(0, 7, (4,))  # Valid labels for second dialogue
+    if batch_size > 1:
+        labels[1, :4] = torch.randint(0, 7, (4,))  # Valid labels for second dialogue (if it exists)
     batch["labels"] = labels
     
     return batch
