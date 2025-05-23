@@ -233,7 +233,7 @@ class MELDDataModule(pl.LightningDataModule):
         ds = self.ds[split]
 
         sampler = None
-        arch = getattr(self.cfg, "architecture", "").lower()
+        arch = getattr(self.cfg, "architecture_name", "").lower()
       
         if split == "train" and arch not in {"dialog_rnn","todkat_lite"}:
             # only do utterance‐level balancing for MLP baseline
