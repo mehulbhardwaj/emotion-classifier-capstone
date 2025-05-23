@@ -13,7 +13,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from configs.base_config import BaseConfig
+from configs.base_config import Config
 from models.todkat_lite import TodkatLiteMLP
 
 
@@ -53,7 +53,7 @@ def test_todkat_shapes():
     print("🔍 Testing TOD-KAT output shapes...")
     
     # Create config
-    config = BaseConfig()
+    config = Config()
     config.architecture_name = "todkat_lite"
     config.output_dim = 7
     config.topic_embedding_dim = 100
@@ -91,7 +91,7 @@ def test_causal_masking():
     print("\n🔍 Testing causal masking...")
     
     # Create a simple test where we can verify causality
-    config = BaseConfig()
+    config = Config()
     config.architecture_name = "todkat_lite"
     config.output_dim = 7
     config.topic_embedding_dim = 10  # Smaller for testing
@@ -125,7 +125,7 @@ def test_training_step():
     """Test that training step works with the new implementation."""
     print("\n🔍 Testing training step...")
     
-    config = BaseConfig()
+    config = Config()
     config.architecture_name = "todkat_lite"
     config.output_dim = 7
     config.topic_embedding_dim = 100
@@ -166,7 +166,7 @@ def test_data_efficiency():
     """Test that we're using more data now (all valid utterances vs just last)."""
     print("\n🔍 Testing data efficiency...")
     
-    config = BaseConfig()
+    config = Config()
     config.architecture_name = "todkat_lite"
     config.output_dim = 7
     config.topic_embedding_dim = 50
