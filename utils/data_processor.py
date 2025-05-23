@@ -26,6 +26,7 @@ from datasets import load_from_disk
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from transformers import AutoTokenizer
 from transformers import AutoTokenizer
+from utils.sampler import DialogueBatchSampler
 
 
 ################################################################################
@@ -231,35 +232,47 @@ class MELDDataModule(pl.LightningDataModule):
         ds = self.ds[split]
 
         sampler = None
-        if split == "train":
+        if split == "train" and arch not in {"dialog_rnn","todkat_lite"}:
+            # only do utterance‐level balancing for MLP baseline
             y = torch.tensor(ds.ds["label"])
             w = (1.0 / torch.bincount(y, minlength=self.cfg.output_dim))[y]
             sampler, shuffle = WeightedRandomSampler(w, len(w), replacement=True), False
 
-        arch = getattr(self.cfg, "architecture", "").lower()
-        if arch == "dialog_rnn":
-            # post-filter the dict to exactly what Dialog-RNN expects
-            def collate(batch):
-                b = self._collate_dialog(batch)
-                keep = ["wav","wav_mask","txt","txt_mask",
-                        "labels","speaker_id","dialog_mask"]
-                return {k:b[k] for k in keep}
-        elif arch == "todkat_lite":
-            def collate(batch):
-                b = self._collate_dialog(batch)
-                return b        # TOD-KAT consumes topic_id & kn_vec too
-        else:
-            collate = self._to_5tuple
 
-        return DataLoader(
-            ds,
-            batch_size=self.cfg.batch_size,
-            sampler=sampler,
-            shuffle=shuffle,
-            num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
-            pin_memory=True,
-            collate_fn=collate,
-        )
+        arch = getattr(self.cfg, "architecture", "").lower()
+        if arch in {"dialog_rnn", "todkat_lite"}:
+            # build mapping from Dialogue_ID → list of dataset indices
+            mapping: Dict[int, List[int]] = defaultdict(list)
+            for idx in range(len(ds)):
+                row = ds.ds[idx]
+                mapping[row["dialogue_id"]].append(idx)
+
+            batch_sampler = DialogueBatchSampler(
+                dialogue_to_indices=mapping,
+                batch_size=self.cfg.batch_size,
+                shuffle=(split == "train"),
+            )
+            # collate all utterances in each dialogue together
+            collate = self._collate_dialog
+            return DataLoader(
+                ds,
+                batch_sampler=batch_sampler,            # yields lists of utterance‐indices
+                num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
+                pin_memory=True,
+                collate_fn=collate,
+            )
+        else:
+            # utterance‐level baseline
+            collate = self._to_5tuple
+            return DataLoader(
+                ds,
+                batch_size=self.cfg.batch_size,
+                sampler=sampler,
+                shuffle=shuffle,
+                num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
+                pin_memory=True,
+                collate_fn=collate,
+            )
 
     # Lightning hooks ---------------------------------------------------
     def train_dataloader(self):
