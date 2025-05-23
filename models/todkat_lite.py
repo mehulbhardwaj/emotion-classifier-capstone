@@ -171,8 +171,27 @@ class TodkatLiteMLP(LightningModule):
     # lightning steps
     # ------------------------------------------------------------------
     def _shared_step(self, batch: Dict[str, torch.Tensor], stage: str):
-        labels = batch["labels"][:, -1]
-        logits = self(batch)
+        # TOD-KAT predicts only the last utterance emotion in a dialog
+        labels = batch["labels"][:, -1]  # (B,)
+        logits = self(batch)  # (B, C)
+        
+        # Debug: Check for invalid labels
+        if torch.any(labels < 0) or torch.any(labels >= self.num_classes):
+            print(f"⚠️  Invalid labels detected in {stage}:")
+            print(f"   Labels range: {labels.min().item()} to {labels.max().item()}")
+            print(f"   Expected range: 0 to {self.num_classes-1}")
+            print(f"   Invalid labels: {labels[torch.logical_or(labels < 0, labels >= self.num_classes)]}")
+            
+            # Filter out invalid labels
+            valid_mask = torch.logical_and(labels >= 0, labels < self.num_classes)
+            if not torch.any(valid_mask):
+                print("❌ No valid labels in batch, skipping...")
+                return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            
+            labels = labels[valid_mask]
+            logits = logits[valid_mask]
+            print(f"   Using {valid_mask.sum().item()}/{valid_mask.shape[0]} valid samples")
+        
         loss = focal_loss(logits, labels, self.alpha, gamma=float(getattr(self.config, "focal_gamma", 2.0)))
         preds = logits.argmax(dim=-1)
 
