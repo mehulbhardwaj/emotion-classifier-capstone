@@ -19,7 +19,7 @@ rel_transformer_layers: 2
 rel_heads: 4
 mlp_hidden_size: 512
 mlp_dropout_rate: 0.3
-use_knowledge: false
+use_knowledge: true
 
 # Encoder settings
 text_encoder_model_name: roberta-base

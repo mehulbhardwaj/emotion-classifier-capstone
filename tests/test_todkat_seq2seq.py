@@ -30,7 +30,7 @@ def create_test_batch(batch_size=2, seq_len=5, audio_len=1000, text_len=20):
         "txt": torch.randint(1, 1000, (batch_size, seq_len, text_len)),  # Avoid 0 (pad)
         "txt_mask": torch.ones(batch_size, seq_len, text_len, dtype=torch.bool),
         "topic_id": torch.randint(0, 50, (batch_size, seq_len)),
-        "kn_vec": torch.randn(batch_size, seq_len, 50),  # Optional knowledge vectors
+        "kn_vec": torch.randn(batch_size, seq_len, 64),  # Updated to 64-dim knowledge vectors
     }
     
     # Dialog mask: True for valid utterances, False for padding
@@ -132,7 +132,7 @@ def test_training_step():
     config.n_topics = 50
     config.rel_transformer_layers = 2
     config.rel_heads = 4
-    config.use_knowledge = False  # Simpler for testing
+    config.use_knowledge = True  # Enable knowledge vectors
     config.focal_gamma = 2.0
     config.class_weights = [1.0] * 7
     
@@ -173,7 +173,7 @@ def test_data_efficiency():
     config.n_topics = 50
     config.rel_transformer_layers = 1
     config.rel_heads = 4
-    config.use_knowledge = False
+    config.use_knowledge = True
     config.focal_gamma = 2.0
     config.class_weights = [1.0] * 7
     

@@ -11,7 +11,7 @@ def check_dimensions():
     # Create config
     config = Config()
     config.topic_embedding_dim = 128
-    config.use_knowledge = False
+    config.use_knowledge = True  # Test with knowledge enabled
     config.rel_heads = 4
     
     # Load encoders
@@ -22,7 +22,7 @@ def check_dimensions():
     audio_dim = audio_encoder.config.hidden_size
     text_dim = text_encoder.config.hidden_size
     topic_dim = config.topic_embedding_dim
-    kn_dim = 50 if config.use_knowledge else 0
+    kn_dim = 64 if config.use_knowledge else 0
     
     d_model = audio_dim + text_dim + topic_dim + kn_dim
     n_heads = config.rel_heads
