@@ -105,13 +105,29 @@ class TodkatLiteMLP(LightningModule):
 
         # optional partial unfreeze
         self.audio_lr_mul = self.text_lr_mul = 0.0
+        print(f"🔧 Fine-tune Debug:")
+        print(f"   hasattr(config, 'fine_tune'): {hasattr(config, 'fine_tune')}")
         if hasattr(config, "fine_tune"):
+            print(f"   config.fine_tune: {config.fine_tune}")
+            print(f"   type(config.fine_tune): {type(config.fine_tune)}")
             n_audio = int(getattr(config.fine_tune.audio_encoder, "unfreeze_top_n_layers", 0))
             n_text  = int(getattr(config.fine_tune.text_encoder,  "unfreeze_top_n_layers", 0))
+            print(f"   n_audio layers to unfreeze: {n_audio}")
+            print(f"   n_text layers to unfreeze: {n_text}")
             self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, n_audio)
             self._unfreeze_top_n_layers(self.text_encoder.encoder.layer,  n_text)
             self.audio_lr_mul = float(getattr(config.fine_tune.audio_encoder, "lr_mul", 1.0))
             self.text_lr_mul = float(getattr(config.fine_tune.text_encoder,  "lr_mul", 1.0))
+            print(f"   audio_lr_mul: {self.audio_lr_mul}")
+            print(f"   text_lr_mul: {self.text_lr_mul}")
+            
+            # Check if unfreezing worked
+            audio_trainable = sum(p.requires_grad for p in self.audio_encoder.parameters())
+            text_trainable = sum(p.requires_grad for p in self.text_encoder.parameters())
+            print(f"   Audio encoder trainable params: {audio_trainable}")
+            print(f"   Text encoder trainable params: {text_trainable}")
+        else:
+            print(f"   No fine_tune config found - encoders remain frozen")
 
         # ----- topic & knowledge embeddings -----
         n_topics = int(getattr(config, "n_topics", 50))
