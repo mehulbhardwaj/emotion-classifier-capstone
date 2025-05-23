@@ -49,11 +49,18 @@ def train(config):
     data_module = MELDDataModule(config)
     
     # Create the model based on architecture name
+    print(f"🔍 DEBUG: config.architecture_name = '{config.architecture_name}'")
+    print(f"🔍 DEBUG: type = {type(config.architecture_name)}")
+    print(f"🔍 DEBUG: repr = {repr(config.architecture_name)}")
+    
     if config.architecture_name == "mlp_fusion":
+        print("🤖 Creating MultimodalFusionMLP")
         model = MultimodalFusionMLP(config)
     elif config.architecture_name == "todkat_lite":
+        print("🤖 Creating TodkatLiteMLP")
         model = TodkatLiteMLP(config)
     elif config.architecture_name == "dialog_rnn":
+        print("🤖 Creating DialogRNNMLP")
         model = DialogRNNMLP(config)    
     elif config.architecture_name == "teacher":
         model = TeacherTransformer(

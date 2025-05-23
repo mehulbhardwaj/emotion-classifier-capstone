@@ -14,10 +14,10 @@ def test_debug_data_fix():
         
         # Import after path setup
         from utils.data_processor_debug import MELDDataset, MELDDataModule
-        from configs.base_config_debug import DebugConfig
+        from configs.base_config_debug import Config
         
         # Create minimal config
-        config = DebugConfig()
+        config = Config()
         config.data_root = "/content/drive/MyDrive/dlfa_capstone/meld_data"
         config.architecture_name = "dialog_rnn"
         config.batch_size = 2
