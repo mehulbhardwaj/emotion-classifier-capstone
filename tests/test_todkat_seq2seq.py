@@ -17,7 +17,7 @@ from configs.base_config import Config
 from models.todkat_lite import TodkatLiteMLP
 
 
-def create_test_batch(batch_size=2, seq_len=5, audio_len=1000, text_len=20):
+def create_test_batch(batch_size=2, seq_len=5, audio_len=1000, text_len=20, n_topics=50):
     """Create a test batch with known valid/invalid patterns."""
     
     # Create a batch where:
@@ -29,7 +29,7 @@ def create_test_batch(batch_size=2, seq_len=5, audio_len=1000, text_len=20):
         "wav_mask": torch.ones(batch_size, seq_len, audio_len, dtype=torch.bool),
         "txt": torch.randint(1, 1000, (batch_size, seq_len, text_len)),  # Avoid 0 (pad)
         "txt_mask": torch.ones(batch_size, seq_len, text_len, dtype=torch.bool),
-        "topic_id": torch.randint(0, 50, (batch_size, seq_len)),
+        "topic_id": torch.randint(0, n_topics, (batch_size, seq_len)),
         "kn_vec": torch.randn(batch_size, seq_len, 64),  # Updated to 64-dim knowledge vectors
     }
     
@@ -107,7 +107,7 @@ def test_causal_masking():
     
     # Create a batch with specific pattern
     batch_size, seq_len = 1, 3
-    batch = create_test_batch(batch_size=batch_size, seq_len=seq_len)
+    batch = create_test_batch(batch_size=batch_size, seq_len=seq_len, n_topics=5)
     
     # Make all utterances valid
     batch["dialog_mask"][:] = True
