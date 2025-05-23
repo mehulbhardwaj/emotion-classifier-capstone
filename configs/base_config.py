@@ -67,6 +67,11 @@ class Config:
     rel_transformer_layers: int = 2
     rel_heads: int = 4
     use_knowledge: bool = False
+    knowledge_dim: int = 16
+    use_topic_mlps: bool = False
+    use_knowledge_attention: bool = False
+    projection_dim: int = 256
+    transformer_dim_feedforward: int = 256
     eta_min: float = 1e-7
     
     # Loss settings
