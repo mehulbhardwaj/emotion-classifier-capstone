@@ -1,27 +1,32 @@
-# Simple TOD-KAT Lite Config (No Hydra syntax)
-# ============================================
+# TOD-KAT Lite Config - Optimized for 7.5M Parameters
+# ===================================================
 
 # CRITICAL: Architecture selection
 architecture_name: todkat_lite
 
 # Experiment settings
-experiment_name: colab_run_todkat_lite
+experiment_name: colab_run_todkat_lite_optimal
 random_seed: 42
 
 # Data paths
 data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
 
-# Model architecture settings
+# Model architecture settings - OPTIMIZED FOR 7.5M PARAMS
 output_dim: 7
-topic_embedding_dim: 32
-n_topics: 50
-rel_transformer_layers: 2
-rel_heads: 4
-projection_dim: 128
-mlp_hidden_size: 512
+topic_embedding_dim: 64      # INCREASED: More topic representation
+n_topics: 64                 # INCREASED: More topic diversity
+rel_transformer_layers: 3    # INCREASED: Deeper reasoning (key for dialogue)
+rel_heads: 8                 # INCREASED: More attention patterns
+projection_dim: 256          # OPTIMIZED: Balance size vs capacity
+mlp_hidden_size: 1024        # INCREASED: Larger classifier capacity
 mlp_dropout_rate: 0.3
-use_knowledge: true
-knowledge_dim: 16
+use_knowledge: true          # CORE: Knowledge is essential for TOD-KAT
+knowledge_dim: 32            # INCREASED: Richer knowledge representation
+
+# TOD-KAT Specific Features
+use_topic_mlps: true         # NEW: Add topic MLPs (fₙᵤ, fₛ) like SOTA
+use_knowledge_attention: true # NEW: Bahdanau-style knowledge attention
+transformer_dim_feedforward: 512  # INCREASED: More transformer capacity
 
 # Encoder settings
 text_encoder_model_name: roberta-base
@@ -54,5 +59,5 @@ dataloader_num_workers: 2
 # Text processing
 text_max_length: 128
 
-# Scheduler settings (for TOD-KAT's more complex training)
+# Scheduler settings
 eta_min: 1e-7 

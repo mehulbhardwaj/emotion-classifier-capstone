@@ -63,6 +63,10 @@ class TodkatLiteMLP(LightningModule):
         self.topic_dim: int = int(getattr(config, "topic_embedding_dim", 100))
         self.use_knowledge: bool = bool(getattr(config, "use_knowledge", False))
         self.kn_dim: int = int(getattr(config, "knowledge_dim", 16)) if self.use_knowledge else 0
+        
+        # NEW: SOTA TOD-KAT features
+        self.use_topic_mlps: bool = bool(getattr(config, "use_topic_mlps", False))
+        self.use_knowledge_attention: bool = bool(getattr(config, "use_knowledge_attention", False))
 
         # ----- encoders (frozen) -----
         self.audio_encoder: Wav2Vec2Model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
@@ -84,6 +88,34 @@ class TodkatLiteMLP(LightningModule):
         n_topics = int(getattr(config, "n_topics", 50))
         self.topic_emb = nn.Embedding(n_topics, self.topic_dim)
 
+        # ----- SOTA TOD-KAT COMPONENTS -----
+        # Topic MLPs (fₙᵤ and fₛ from SOTA paper)
+        if self.use_topic_mlps:
+            audio_hidden = self.audio_encoder.config.hidden_size
+            text_hidden = self.text_encoder.config.hidden_size
+            self.topic_mlp_audio = nn.Sequential(
+                nn.Linear(audio_hidden, audio_hidden),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(audio_hidden, self.topic_dim)
+            )
+            self.topic_mlp_text = nn.Sequential(
+                nn.Linear(text_hidden, text_hidden), 
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(text_hidden, self.topic_dim)
+            )
+        
+        # Knowledge attention mechanism (Bahdanau-style)
+        if self.use_knowledge_attention:
+            self.knowledge_attention = nn.MultiheadAttention(
+                embed_dim=self.kn_dim,
+                num_heads=4,
+                dropout=0.1,
+                batch_first=True
+            )
+            self.knowledge_query_proj = nn.Linear(768+768, self.kn_dim)  # [audio;text] -> knowledge query
+
         # ----- ADD PROJECTION LAYERS TO REDUCE d_model -----
         # Project high-dimensional features to smaller dimensions
         projection_dim = int(getattr(config, "projection_dim", 128))
@@ -100,11 +132,12 @@ class TodkatLiteMLP(LightningModule):
 
         n_layers = int(getattr(config, "rel_transformer_layers", 2))
         n_heads  = int(getattr(config, "rel_heads", 4))
+        dim_feedforward = int(getattr(config, "transformer_dim_feedforward", 256))
         self.rel_enc = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=self.d_model,
                 nhead=n_heads,
-                dim_feedforward=128,
+                dim_feedforward=dim_feedforward,
                 dropout=0.1,
                 batch_first=True,
             ),
@@ -169,9 +202,31 @@ class TodkatLiteMLP(LightningModule):
         a_proj = self.audio_proj(a_emb)  # (B, T, projection_dim)
         t_proj = self.text_proj(t_emb)   # (B, T, projection_dim)
 
-        topic_emb = self.topic_emb(topic_id)  # (B,T,topic_dim)
-        if self.use_knowledge and kn_vec is not None:
-            x = torch.cat([a_proj, t_proj, topic_emb, kn_vec], dim=-1)
+        # ---- ENHANCED TOPIC PROCESSING ----
+        if self.use_topic_mlps:
+            # Use topic MLPs like SOTA (fₙᵤ, fₛ)
+            topic_from_audio = self.topic_mlp_audio(a_emb)  # (B, T, topic_dim)
+            topic_from_text = self.topic_mlp_text(t_emb)    # (B, T, topic_dim)
+            # Combine: learned topics + lookup topics
+            topic_lookup = self.topic_emb(topic_id)
+            topic_emb = topic_lookup + topic_from_audio + topic_from_text
+        else:
+            topic_emb = self.topic_emb(topic_id)  # (B,T,topic_dim)
+        
+        # ---- ENHANCED KNOWLEDGE PROCESSING ----
+        if self.use_knowledge_attention and kn_vec is not None:
+            # Use attention mechanism for knowledge (like SOTA)
+            query = self.knowledge_query_proj(torch.cat([a_emb, t_emb], dim=-1))  # (B,T,kn_dim)
+            attended_knowledge, _ = self.knowledge_attention(
+                query, kn_vec, kn_vec  # Q, K, V
+            )
+            knowledge_features = attended_knowledge
+        else:
+            knowledge_features = kn_vec if (self.use_knowledge and kn_vec is not None) else None
+
+        # ---- CONCATENATE FEATURES ----
+        if self.use_knowledge and knowledge_features is not None:
+            x = torch.cat([a_proj, t_proj, topic_emb, knowledge_features], dim=-1)
         else:
             x = torch.cat([a_proj, t_proj, topic_emb], dim=-1)
 

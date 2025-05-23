@@ -14,7 +14,7 @@ def check_dimensions():
     config.use_knowledge = True  # FIXED: Knowledge is core to TOD-KAT
     config.knowledge_dim = 16    # Updated to match new config
     config.rel_heads = 4
-    config.projection_dim = 128  # NEW: projection dimension
+    config.projection_dim = 400  # UPDATED: to target 6-7M params
     
     # Load encoders
     audio_encoder = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base-960h")
@@ -62,6 +62,24 @@ def check_dimensions():
     
     total_trainable = total_transformer_params + projection_params
     print(f"  Total trainable (est): {total_trainable:,} ({total_trainable/1e6:.1f}M)")
+    
+    # Test different projection dimensions
+    print(f"\n🎯 Parameter scaling analysis:")
+    print(f"{'Proj Dim':<10} {'d_model':<10} {'Trans (M)':<10} {'Proj (M)':<10} {'Total (M)':<10} {'Heads OK':<10}")
+    print("-" * 70)
+    
+    for proj_dim in [128, 192, 256, 320, 384, 448, 512]:
+        d_test = proj_dim + proj_dim + topic_dim + kn_dim
+        heads_ok = "✅" if d_test % n_heads == 0 else "❌"
+        
+        att_params = 4 * d_test * d_test * n_layers
+        ff_params = 2 * d_test * dim_feedforward * n_layers
+        trans_total = att_params + ff_params
+        
+        proj_params = audio_dim * proj_dim + text_dim * proj_dim
+        total_est = trans_total + proj_params
+        
+        print(f"{proj_dim:<10} {d_test:<10} {trans_total/1e6:<10.1f} {proj_params/1e6:<10.1f} {total_est/1e6:<10.1f} {heads_ok:<10}")
     
     # Test different head counts
     print("\nTesting different head counts:")
