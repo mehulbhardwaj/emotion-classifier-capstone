@@ -137,6 +137,17 @@ class MELDDataModule(pl.LightningDataModule):
             wav_mask = (wav != 0.0).long()
         return wav, wav_mask, txt, txt_mask, labels
 
+    def _to_8tuple(self, raw: Dict[str, Any]):
+        wav, wav_mask, txt, txt_mask, labels = self._to_5tuple(raw)
+    
+        # expand T dimension = 1 so downstream code sees (B,1)
+        labels = labels.unsqueeze(1)          # (B,1)
+        topic_id    = torch.zeros_like(labels)
+        dialog_mask = torch.ones_like(labels)     # last-utt valid
+        kn_vec      = torch.zeros(labels.size(0), labels.size(1), 50)
+    
+        return wav, wav_mask, txt, txt_mask, labels, topic_id, dialog_mask, kn_vec
+
     def _loader(self, split: str, shuffle: bool):
         ds = self.datasets[split]
 
@@ -157,6 +168,23 @@ class MELDDataModule(pl.LightningDataModule):
         else:
             sampler, shuffle = None, False
 
+        # choose collate
+        if arch == "todkat_lite":
+            def collate(batch):
+                tup = self._to_8tuple(ds.collate_fn(batch))
+                return {
+                    "wav":         tup[0],
+                    "wav_mask":    tup[1],
+                    "txt":         tup[2],
+                    "txt_mask":    tup[3],
+                    "labels":      tup[4],
+                    "topic_id":    tup[5],
+                    "dialog_mask": tup[6],
+                    "kn_vec":      tup[7],
+                }
+        else:
+            collate = lambda batch: self._to_5tuple(ds.collate_fn(batch))
+    
         return DataLoader(
             ds,
             batch_size=self.cfg.batch_size,
@@ -164,8 +192,9 @@ class MELDDataModule(pl.LightningDataModule):
             shuffle=shuffle,
             num_workers=getattr(self.cfg, "dataloader_num_workers", 4),
             pin_memory=True,
-            collate_fn=lambda batch: self._to_5tuple(ds.collate_fn(batch)),
+            collate_fn=collate,
         )
+
 
     def train_dataloader(self):
         return self._loader("train", True)
