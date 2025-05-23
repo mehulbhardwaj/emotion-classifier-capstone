@@ -58,11 +58,24 @@ class TodkatLiteMLP(LightningModule):
         self.config = config
         self.save_hyperparameters(ignore=["config"])
 
+        # DEBUG: Print ALL config attributes to debug the issue
+        print(f"🔍 TOD-KAT Config Object Debug:")
+        print(f"   Config type: {type(config)}")
+        if hasattr(config, '__dict__'):
+            for key, value in config.__dict__.items():
+                print(f"   {key}: {value}")
+        print(f"   ----")
+
         # ----- constants from cfg -----
         self.num_classes: int = int(getattr(config, "output_dim", 7))
         self.topic_dim: int = int(getattr(config, "topic_embedding_dim", 100))
         self.use_knowledge: bool = bool(getattr(config, "use_knowledge", False))
-        self.kn_dim: int = int(getattr(config, "knowledge_dim", 16)) if self.use_knowledge else 0
+        
+        # More robust config reading - try multiple access patterns
+        knowledge_dim_val = getattr(config, "knowledge_dim", 16)
+        if hasattr(config, 'knowledge_dim'):
+            knowledge_dim_val = config.knowledge_dim
+        self.kn_dim: int = int(knowledge_dim_val) if self.use_knowledge else 0
         
         # DEBUG: Print what the model is reading
         print(f"🔍 TOD-KAT Model Config Debug:")
@@ -70,9 +83,16 @@ class TodkatLiteMLP(LightningModule):
         print(f"   use_knowledge: {self.use_knowledge}")
         print(f"   knowledge_dim: {self.kn_dim}")
         
-        # NEW: SOTA TOD-KAT features
-        self.use_topic_mlps: bool = bool(getattr(config, "use_topic_mlps", False))
-        self.use_knowledge_attention: bool = bool(getattr(config, "use_knowledge_attention", False))
+        # NEW: SOTA TOD-KAT features - more robust reading
+        topic_mlps_val = getattr(config, "use_topic_mlps", False)
+        if hasattr(config, 'use_topic_mlps'):
+            topic_mlps_val = config.use_topic_mlps
+        self.use_topic_mlps: bool = bool(topic_mlps_val)
+        
+        knowledge_attention_val = getattr(config, "use_knowledge_attention", False)
+        if hasattr(config, 'use_knowledge_attention'):
+            knowledge_attention_val = config.use_knowledge_attention
+        self.use_knowledge_attention: bool = bool(knowledge_attention_val)
         
         print(f"   use_topic_mlps: {self.use_topic_mlps}")
         print(f"   use_knowledge_attention: {self.use_knowledge_attention}")
@@ -338,11 +358,25 @@ class TodkatLiteMLP(LightningModule):
                 groups.append({"params": [p for p in self.text_encoder.parameters() if p.requires_grad],
                                "lr": lr_base * self.text_lr_mul})
     
-            # topic + Transformer + classifier always train
-            groups.append({"params": list(self.topic_emb.parameters()) +
-                                      list(self.rel_enc.parameters()) +
-                                      list(self.classifier.parameters()),
-                           "lr": lr_base})
+            # Collect all trainable components
+            trainable_params = []
+            trainable_params.extend(list(self.topic_emb.parameters()))
+            trainable_params.extend(list(self.audio_proj.parameters()))
+            trainable_params.extend(list(self.text_proj.parameters()))
+            trainable_params.extend(list(self.rel_enc.parameters()))
+            trainable_params.extend(list(self.classifier.parameters()))
+            
+            # Add topic MLPs if enabled
+            if self.use_topic_mlps:
+                trainable_params.extend(list(self.topic_mlp_audio.parameters()))
+                trainable_params.extend(list(self.topic_mlp_text.parameters()))
+            
+            # Add knowledge attention if enabled
+            if self.use_knowledge_attention:
+                trainable_params.extend(list(self.knowledge_attention.parameters()))
+                trainable_params.extend(list(self.knowledge_query_proj.parameters()))
+            
+            groups.append({"params": trainable_params, "lr": lr_base})
     
             optimizer = optim.AdamW(groups, weight_decay=wd)
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
