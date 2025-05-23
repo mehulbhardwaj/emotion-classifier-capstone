@@ -71,24 +71,17 @@ class MultimodalFusionMLP(LightningModule):
         for p in self.text_encoder.parameters():
             p.requires_grad = False
 
-        # Optional fine‑tune policy ------------------------------------------------
-        if hasattr(self.config, "fine_tune"):
-            n_audio = int(getattr(self.config.fine_tune.audio_encoder, "unfreeze_top_n_layers", 0))
-            n_text = int(getattr(self.config.fine_tune.text_encoder, "unfreeze_top_n_layers", 0))
-            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, n_audio)
-            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, n_text)
-
-            self.audio_lr_mul = float(
-                getattr(self.config.fine_tune.audio_encoder, "lr_mul", 1.0)
-            )
-            self.text_lr_mul = float(
-                getattr(self.config.fine_tune.text_encoder, "lr_mul", 1.0)
-            )
-        else:
-            # Keep encoders frozen but still register a param‑group with LR 0 ➜
-            # avoids PyTorch warnings about unused parameters in DDP.
-            self.audio_lr_mul = 0.0
-            self.text_lr_mul = 0.0
+        # Optional encoder fine-tuning - SIMPLIFIED
+        self.audio_lr_mul = self.text_lr_mul = 0.0
+        
+        unfreeze_audio = int(getattr(self.config, "unfreeze_audio_layers", 0))
+        unfreeze_text = int(getattr(self.config, "unfreeze_text_layers", 0))
+        
+        if unfreeze_audio > 0 or unfreeze_text > 0:
+            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, unfreeze_audio)
+            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, unfreeze_text)
+            self.audio_lr_mul = float(getattr(self.config, "audio_lr_mul", 1.0))
+            self.text_lr_mul = float(getattr(self.config, "text_lr_mul", 1.0))
 
         # ------------------------------------------------------------------
         # 2)   Fusion MLP

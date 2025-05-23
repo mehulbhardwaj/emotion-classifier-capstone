@@ -106,18 +106,19 @@ class TodkatLiteMLP(LightningModule):
         # optional partial unfreeze
         self.audio_lr_mul = self.text_lr_mul = 0.0
         print(f"🔧 Fine-tune Debug:")
-        print(f"   hasattr(config, 'fine_tune'): {hasattr(config, 'fine_tune')}")
-        if hasattr(config, "fine_tune"):
-            print(f"   config.fine_tune: {config.fine_tune}")
-            print(f"   type(config.fine_tune): {type(config.fine_tune)}")
-            n_audio = int(getattr(config.fine_tune.audio_encoder, "unfreeze_top_n_layers", 0))
-            n_text  = int(getattr(config.fine_tune.text_encoder,  "unfreeze_top_n_layers", 0))
-            print(f"   n_audio layers to unfreeze: {n_audio}")
-            print(f"   n_text layers to unfreeze: {n_text}")
-            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, n_audio)
-            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer,  n_text)
-            self.audio_lr_mul = float(getattr(config.fine_tune.audio_encoder, "lr_mul", 1.0))
-            self.text_lr_mul = float(getattr(config.fine_tune.text_encoder,  "lr_mul", 1.0))
+        
+        # Use simplified flat fields
+        unfreeze_audio = int(getattr(config, "unfreeze_audio_layers", 0))
+        unfreeze_text = int(getattr(config, "unfreeze_text_layers", 0))
+        
+        print(f"   unfreeze_audio_layers: {unfreeze_audio}")
+        print(f"   unfreeze_text_layers: {unfreeze_text}")
+        
+        if unfreeze_audio > 0 or unfreeze_text > 0:
+            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, unfreeze_audio)
+            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, unfreeze_text)
+            self.audio_lr_mul = float(getattr(config, "audio_lr_mul", 1.0))
+            self.text_lr_mul = float(getattr(config, "text_lr_mul", 1.0))
             print(f"   audio_lr_mul: {self.audio_lr_mul}")
             print(f"   text_lr_mul: {self.text_lr_mul}")
             
@@ -127,7 +128,7 @@ class TodkatLiteMLP(LightningModule):
             print(f"   Audio encoder trainable params: {audio_trainable}")
             print(f"   Text encoder trainable params: {text_trainable}")
         else:
-            print(f"   No fine_tune config found - encoders remain frozen")
+            print(f"   No layers to unfreeze - encoders remain frozen")
 
         # ----- topic & knowledge embeddings -----
         n_topics = int(getattr(config, "n_topics", 50))
@@ -345,7 +346,7 @@ class TodkatLiteMLP(LightningModule):
         return self._shared_step(batch, "train")
 
     def validation_step(self, batch, batch_idx):
-        self._shared_step(batch, "val")
+        return self._shared_step(batch, "val")
 
     def test_step(self, batch, batch_idx):
         self._shared_step(batch, "test")

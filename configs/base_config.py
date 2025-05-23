@@ -92,6 +92,15 @@ class Config:
     limit_dialogues_dev: Optional[int] = None
     limit_dialogues_test: Optional[int] = None
     
+    # Fine-tuning settings - SIMPLIFIED TO FLAT STRUCTURE
+    unfreeze_audio_layers: int = 0
+    unfreeze_text_layers: int = 0
+    audio_lr_mul: float = 1.0
+    text_lr_mul: float = 1.0
+    
+    # Gradient clipping settings
+    gradient_clip_val: float = 1.0
+    
     def __post_init__(self):
         """Perform post-initialization setup."""
         # Convert string paths to Path objects

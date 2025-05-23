@@ -13,9 +13,9 @@ data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
 
 # Model architecture settings
 output_dim: 7
-gru_hidden_size: 256
+gru_hidden_size: 128
 context_window: 10
-mlp_hidden_size: 2048
+mlp_hidden_size: 1024
 
 # Encoder settings - FAIR COMPARISON
 text_encoder_model_name: roberta-base
@@ -24,14 +24,11 @@ audio_input_type: raw_wav
 freeze_text_encoder: false     # UNFROZEN: for fair comparison
 freeze_audio_encoder: false    # UNFROZEN: for fair comparison
 
-# Fine-tuning settings - STANDARDIZED for all models
-fine_tune:
-  audio_encoder:
-    unfreeze_top_n_layers: 12
-    lr_mul: 1.5
-  text_encoder:
-    unfreeze_top_n_layers: 12
-    lr_mul: 1.5
+# Fine-tuning settings - SIMPLIFIED FLAT STRUCTURE (2 layers for manageable params)
+unfreeze_audio_layers: 2        # CONSERVATIVE: 2 layers instead of 12
+unfreeze_text_layers: 2         # CONSERVATIVE: 2 layers instead of 12
+audio_lr_mul: 1.5
+text_lr_mul: 1.5
 
 # Training settings - STANDARDIZED
 batch_size: 8                   # Consistent across models (reduced from 16)

@@ -1,0 +1,65 @@
+# DialogRNN Slim Config - Optimized for <10M Parameters
+# ====================================================
+
+# CRITICAL: Architecture selection
+architecture_name: dialog_rnn
+
+# Experiment settings
+experiment_name: colab_run_dialog_rnn_slim
+random_seed: 42
+
+# Data paths
+data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
+
+# Model architecture settings
+output_dim: 7
+gru_hidden_size: 64              # REDUCED: 128→64 (major saving on GRUs)
+context_window: 10
+mlp_hidden_size: 512             # REDUCED: 1024→512 (major saving)
+
+# Encoder settings - KEEP FROZEN FOR EFFICIENCY
+text_encoder_model_name: roberta-base
+audio_encoder_model_name: facebook/wav2vec2-base-960h
+audio_input_type: raw_wav
+freeze_text_encoder: true        # FROZEN: saves millions of params
+freeze_audio_encoder: true       # FROZEN: saves millions of params
+
+# Fine-tuning settings - ALL DISABLED
+unfreeze_audio_layers: 0         # FROZEN: no encoder fine-tuning
+unfreeze_text_layers: 0          # FROZEN: no encoder fine-tuning
+audio_lr_mul: 0.0
+text_lr_mul: 0.0
+
+# Training settings - OPTIMIZED
+batch_size: 16                   # INCREASED: can afford larger batch with frozen encoders
+num_epochs: 50              
+learning_rate: 1e-4              # HIGHER: can be more aggressive with frozen encoders
+weight_decay: 1e-4
+optimizer_name: AdamW
+gradient_clip_val: 1.0           # Standard clipping
+
+# Loss settings
+focal_gamma: 1.0            
+
+# Class weights for MELD emotion imbalance
+class_weights: [1.62, 8.22, 11.19, 1.40, 0.45, 2.69, 2.00]
+
+# Training options
+use_mixed_precision: true
+early_stopping_patience: 10  
+grad_accumulation_steps: 1
+
+# DataLoader settings
+dataloader_num_workers: 2
+
+# Additional settings
+mlp_dropout_rate: 0.3
+
+# Scheduler settings
+eta_min: 1e-7
+
+# Expected parameter breakdown (~2-3M total):
+# - 3 GRUs (2-layer bidirectional, hidden=64): ~800K each = 2.4M
+# - MLP classifier (total_dim=1920→512→256→7): ~1.2M
+# - Total trainable: ~3.6M (excluding frozen encoders)
+# - Much more efficient than original 8M+ params 

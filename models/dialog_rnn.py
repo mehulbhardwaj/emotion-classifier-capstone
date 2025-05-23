@@ -74,15 +74,18 @@ class DialogRNNMLP(LightningModule):
         self.text_encoder  = RobertaModel.from_pretrained("roberta-base")
         for p in self.audio_encoder.parameters(): p.requires_grad = False
         for p in self.text_encoder.parameters():  p.requires_grad = False
-        if hasattr(config, "fine_tune"):
-            na = int(config.fine_tune.audio_encoder.unfreeze_top_n_layers)
-            nt = int(config.fine_tune.text_encoder.unfreeze_top_n_layers)
-            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, na)
-            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, nt)
-            self.audio_lr_mul = float(config.fine_tune.audio_encoder.lr_mul)
-            self.text_lr_mul  = float(config.fine_tune.text_encoder.lr_mul)
-        else:
-            self.audio_lr_mul = self.text_lr_mul = 0.0
+
+        # Optional encoder fine-tuning - SIMPLIFIED  
+        self.audio_lr_mul = self.text_lr_mul = 0.0
+        
+        unfreeze_audio = int(getattr(config, "unfreeze_audio_layers", 0))
+        unfreeze_text = int(getattr(config, "unfreeze_text_layers", 0))
+        
+        if unfreeze_audio > 0 or unfreeze_text > 0:
+            self._unfreeze_top_n_layers(self.audio_encoder.encoder.layers, unfreeze_audio)
+            self._unfreeze_top_n_layers(self.text_encoder.encoder.layer, unfreeze_text)
+            self.audio_lr_mul = float(getattr(config, "audio_lr_mul", 1.0))
+            self.text_lr_mul = float(getattr(config, "text_lr_mul", 1.0))
 
         # dimensionalities
         self.enc_dim = (
