@@ -125,7 +125,12 @@ class TodkatLiteMLP(LightningModule):
         # ----- metrics / alpha -----
         self.val_f1  = MulticlassF1Score(num_classes=self.num_classes, average="macro")
         self.test_f1 = MulticlassF1Score(num_classes=self.num_classes, average="macro")
-        alpha = torch.tensor(getattr(config, "class_weights", [1.0] * self.num_classes), dtype=torch.float)
+        
+        # Handle class_weights properly - config might have None value
+        class_weights = getattr(config, "class_weights", None)
+        if class_weights is None:
+            class_weights = [1.0] * self.num_classes
+        alpha = torch.tensor(class_weights, dtype=torch.float)
         self.register_buffer("alpha", alpha)
 
     # ------------------------------------------------------------------
