@@ -52,9 +52,9 @@ def train(config):
     if config.architecture_name == "mlp_fusion":
         model = MultimodalFusionMLP(config)
     elif config.architecture_name == "todkat_lite":
-        model = MultimodalFusionMLP(config)
+        model = TodkatLiteMLP(config)
     elif config.architecture_name == "dialog_rnn":
-        model = MultimodalFusionMLP(config)    
+        model = DialogRNNMLP(config)    
     elif config.architecture_name == "teacher":
         model = TeacherTransformer(
             hidden_size=getattr(config, "hidden_size", 256),
