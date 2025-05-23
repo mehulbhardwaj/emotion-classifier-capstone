@@ -142,7 +142,8 @@ class MultimodalFusionMLP(LightningModule):
     def test_step(self, batch, batch_idx):
         wav, wav_mask, txt, txt_mask, labels = batch
         logits = self(wav, wav_mask, txt, txt_mask)
-        loss = self.criterion(logits, labels)
+        loss = focal_loss(logits, labels, alpha=self.alpha, gamma=getattr(self.config, "focal_gamma", 2.0))
+        #loss = self.criterion(logits, labels)
         preds = logits.argmax(dim=-1)
         acc  = (preds == labels).float().mean()
         self.log("test_loss", loss)
