@@ -20,37 +20,37 @@ rel_heads: 2                     # REDUCED: 4→2 (must divide d_model)
 projection_dim: 128              # REDUCED: 256→128 (major saving)
 mlp_hidden_size: 512             # REDUCED: 1024→512 (major saving)
 mlp_dropout_rate: 0.3
-use_knowledge: false             # DISABLED: saves knowledge_dim params
-knowledge_dim: 0                 # Not used when use_knowledge=false
+use_knowledge: true              # Keep knowledge for TOD-KAT features
+knowledge_dim: 16                # REDUCED: 32→16 (save params)
 
-# TOD-KAT Specific Features - OPTIMIZED
-use_topic_mlps: false            # DISABLED: saves ~1.3M params 
+# TOD-KAT Specific Features - DISABLED to save parameters
+use_topic_mlps: false            # DISABLED: saves ~2M params 
 use_knowledge_attention: false   # DISABLED: saves attention params
-transformer_dim_feedforward: 256 # REDUCED: 512→256 (saves feedforward)
+transformer_dim_feedforward: 256 # REDUCED: 512→256 (save params)
 
-# Encoder settings - KEEP FROZEN FOR EFFICIENCY
+# Encoder settings - PARTIAL UNFREEZING for adaptation
 text_encoder_model_name: roberta-base
 audio_encoder_model_name: facebook/wav2vec2-base-960h
 audio_input_type: raw_wav
-freeze_text_encoder: true        # FROZEN: saves millions of params
-freeze_audio_encoder: true       # FROZEN: saves millions of params
+freeze_text_encoder: false      # UNFROZEN: but limited layers
+freeze_audio_encoder: false     # UNFROZEN: but limited layers
 
-# Fine-tuning settings - ALL DISABLED
-unfreeze_audio_layers: 0         # FROZEN: no encoder fine-tuning
-unfreeze_text_layers: 0          # FROZEN: no encoder fine-tuning
-audio_lr_mul: 0.0
-text_lr_mul: 0.0
+# Fine-tuning settings - INCREASED for model adaptation
+unfreeze_audio_layers: 4         # INCREASED: 2→4 (more adaptation)
+unfreeze_text_layers: 4          # INCREASED: 2→4 (more adaptation)  
+audio_lr_mul: 0.5               # REDUCED: 1.5→0.5 (careful with unfrozen)
+text_lr_mul: 0.5                # REDUCED: 1.5→0.5 (careful with unfrozen)
 
-# Training settings - OPTIMIZED
-batch_size: 16                   # INCREASED: can afford larger batch
+# Training settings - OPTIMIZED for stability
+batch_size: 8                   # Consistent across models
 num_epochs: 50                  
-learning_rate: 1e-4              # HIGHER: can be more aggressive with frozen encoders
+learning_rate: 1e-5             # REDUCED: 2e-5→1e-5 (more stable)
 weight_decay: 1e-4
 optimizer_name: AdamW
-gradient_clip_val: 1.0           # Standard clipping
+gradient_clip_val: 1.0          # INCREASED: 0.5→1.0 (handle gradients)
 
 # Loss settings
-focal_gamma: 2.0
+focal_gamma: 1.0                # REDUCED: 2.0→1.0 (less aggressive)
 
 # Class weights for MELD emotion imbalance
 class_weights: [1.62, 8.22, 11.19, 1.40, 0.45, 2.69, 2.00]
@@ -69,10 +69,10 @@ text_max_length: 128
 # Scheduler settings
 eta_min: 1e-7
 
-# Expected parameter breakdown (~6-8M total):
-# - Topic embedding: 32*32 = 1K
-# - Audio/text projections: 768*128*2 = 197K
-# - Transformer (1 layer, d_model=288): ~400K
-# - Classifier MLP: ~600K
-# - Total trainable: ~1.2M (excluding frozen encoders)
-# - With frozen encoders contributing 0 trainable params 
+# ESTIMATED PARAMETERS:
+# - Topic embeddings: 32*32 = 1,024
+# - Projections: 768*128*2 = 196,608  
+# - Transformer: ~1.2M (1 layer, d_model=176)
+# - Classifier: ~400K
+# - Unfrozen encoders: ~8M (4 layers each)
+# TOTAL: ~10M parameters (within target) 

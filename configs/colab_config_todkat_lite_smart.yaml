@@ -1,0 +1,78 @@
+# TOD-KAT Smart Config - Fix identical outputs with minimal parameters
+# ===================================================================
+
+# CRITICAL: Architecture selection
+architecture_name: todkat_lite
+
+# Experiment settings
+experiment_name: colab_run_todkat_lite_smart
+random_seed: 42
+
+# Data paths
+data_root: /content/drive/MyDrive/dlfa_capstone/meld_data
+
+# Model architecture settings
+output_dim: 7
+topic_embedding_dim: 32          # REDUCED: 64→32 
+n_topics: 32                     # REDUCED: 64→32 
+rel_transformer_layers: 1        # REDUCED: 2→1 
+rel_heads: 2                     # REDUCED: 4→2 
+projection_dim: 128              # REDUCED: 256→128 
+mlp_hidden_size: 512             # REDUCED: 1024→512 
+mlp_dropout_rate: 0.3
+use_knowledge: true              
+knowledge_dim: 16                # REDUCED: 32→16 
+
+# TOD-KAT Specific Features - DISABLED to save parameters
+use_topic_mlps: false            # DISABLED: saves ~2M params 
+use_knowledge_attention: false   # DISABLED: saves attention params
+transformer_dim_feedforward: 256 # REDUCED: 512→256 
+
+# Encoder settings - MINIMAL UNFREEZING (only last layer)
+text_encoder_model_name: roberta-base
+audio_encoder_model_name: facebook/wav2vec2-base-960h
+audio_input_type: raw_wav
+freeze_text_encoder: false      # UNFROZEN: but only 1 layer
+freeze_audio_encoder: false     # UNFROZEN: but only 1 layer
+
+# Fine-tuning settings - MINIMAL but HIGHER LR
+unfreeze_audio_layers: 1         # MINIMAL: only last layer (~1M params)
+unfreeze_text_layers: 1          # MINIMAL: only last layer (~1M params)  
+audio_lr_mul: 2.0               # HIGHER: 0.5→2.0 (compensate for fewer layers)
+text_lr_mul: 2.0                # HIGHER: 0.5→2.0 (compensate for fewer layers)
+
+# Training settings - OPTIMIZED
+batch_size: 8                   
+num_epochs: 50                  
+learning_rate: 5e-5             # HIGHER: 1e-5→5e-5 (help with adaptation)
+weight_decay: 1e-4
+optimizer_name: AdamW
+gradient_clip_val: 1.0          
+
+# Loss settings
+focal_gamma: 1.0                # REDUCED: 2.0→1.0 
+
+# Class weights for MELD emotion imbalance
+class_weights: [1.62, 8.22, 11.19, 1.40, 0.45, 2.69, 2.00]
+
+# Training options
+use_mixed_precision: true
+early_stopping_patience: 10   
+grad_accumulation_steps: 1
+
+# DataLoader settings
+dataloader_num_workers: 2
+
+# Text processing
+text_max_length: 128
+
+# Scheduler settings
+eta_min: 1e-7
+
+# ESTIMATED PARAMETERS:
+# - Topic embeddings: 32*32 = 1,024
+# - Projections: 768*128*2 = 196,608  
+# - Transformer: ~400K (1 layer, d_model=176)
+# - Classifier: ~400K
+# - Unfrozen encoders: ~2M (1 layer each, not 8M!)
+# TOTAL: ~3M parameters (well under target!) 
