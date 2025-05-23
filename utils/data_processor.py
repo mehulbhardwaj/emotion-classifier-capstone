@@ -137,15 +137,13 @@ class MELDDataModule(pl.LightningDataModule):
             wav_mask = (wav != 0.0).long()
         return wav, wav_mask, txt, txt_mask, labels
 
-    def _to_8tuple(self, raw: Dict[str, Any]):
+    def _to_8tuple(self, raw):
         wav, wav_mask, txt, txt_mask, labels = self._to_5tuple(raw)
-    
-        # expand T dimension = 1 so downstream code sees (B,1)
-        labels = labels.unsqueeze(1)          # (B,1)
+        labels = labels.unsqueeze(1)                   # <-- add this
         topic_id    = torch.zeros_like(labels)
-        dialog_mask = torch.ones_like(labels)     # last-utt valid
+        dialog_mask = (wav_mask.sum(-1) != 0).long()
         kn_vec      = torch.zeros(labels.size(0), labels.size(1), 50)
-    
+        
         return wav, wav_mask, txt, txt_mask, labels, topic_id, dialog_mask, kn_vec
 
     def _loader(self, split: str, shuffle: bool):
