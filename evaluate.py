@@ -21,7 +21,8 @@ from models.mlp_fusion import MultimodalFusionMLP
 from models.teacher import TeacherTransformer
 from models.student import StudentGRU
 from models.panns_fusion import PaNNsFusion
-
+from models.dialog_rnn import DialogRNNMLP
+from models.todkat_lite import TodkatLiteMLP
 
 def set_seed(seed):
     """Set random seed for reproducibility."""
@@ -43,6 +44,10 @@ def load_model(checkpoint_path, config):
     elif config.architecture_name == "student":
         model = StudentGRU.load_from_checkpoint(checkpoint_path)
     elif config.architecture_name == "panns_fusion":
+        model = PaNNsFusion.load_from_checkpoint(checkpoint_path)
+    elif config.architecture_name == "todkat_lite":
+        model = PaNNsFusion.load_from_checkpoint(checkpoint_path)
+    elif config.architecture_name == "dialog_rnn":
         model = PaNNsFusion.load_from_checkpoint(checkpoint_path)
     else:
         raise ValueError(f"Architecture {config.architecture_name} not implemented. "
