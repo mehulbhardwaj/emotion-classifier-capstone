@@ -83,6 +83,7 @@ class MELDDataset(Dataset):
         
         self.samples = []
         audio_dir = self.data_dir / f"{self.split}_audio"
+        missing_audio_count = 0
         
         for idx, row in self.metadata.iterrows():
             if idx % 100 == 0:
@@ -97,11 +98,16 @@ class MELDDataset(Dataset):
                 'audio_path': audio_dir / f"dia{row['Dialogue_ID']}_utt{row['Utterance_ID']}.wav"
             }
             
-            # Check if audio file exists
-            if sample['audio_path'].exists():
-                self.samples.append(sample)
-            else:
-                print(f"      ⚠️  Missing audio: {sample['audio_path']}")
+            # Always include sample, even if audio is missing
+            self.samples.append(sample)
+            
+            if not sample['audio_path'].exists():
+                missing_audio_count += 1
+                if missing_audio_count <= 5:  # Only print first 5 to avoid spam
+                    print(f"      ⚠️  Missing audio: {sample['audio_path']}")
+        
+        if missing_audio_count > 0:
+            print(f"   📊 Total missing audio files: {missing_audio_count} (will use dummy audio)")
         
         print(f"   ✅ Loaded {len(self.samples)} utterance samples")
     
@@ -114,6 +120,7 @@ class MELDDataset(Dataset):
         audio_dir = self.data_dir / f"{self.split}_audio"
         print(f"   Audio directory: {audio_dir}")
         
+        missing_audio_count = 0
         for idx, row in self.metadata.iterrows():
             dia_id = row['Dialogue_ID']
             if dia_id not in dialogs:
@@ -127,10 +134,18 @@ class MELDDataset(Dataset):
                 'audio_path': audio_dir / f"dia{dia_id}_utt{row['Utterance_ID']}.wav"
             }
             
-            if utterance['audio_path'].exists():
-                dialogs[dia_id].append(utterance)
-            else:
-                print(f"      ⚠️  Missing audio: {utterance['audio_path']}")
+            # Always include utterance, even if audio is missing
+            dialogs[dia_id].append(utterance)
+            
+            if not utterance['audio_path'].exists():
+                missing_audio_count += 1
+                if missing_audio_count <= 5:  # Only print first 5 to avoid spam
+                    print(f"      ⚠️  Missing audio: {utterance['audio_path']}")
+                elif missing_audio_count == 6:
+                    print(f"      ⚠️  ... and {missing_audio_count - 5} more missing audio files (using dummy audio)")
+        
+        if missing_audio_count > 0:
+            print(f"   📊 Total missing audio files: {missing_audio_count} (will use dummy audio)")
         
         # Convert to list and sort
         self.samples = []
@@ -145,7 +160,10 @@ class MELDDataset(Dataset):
         
         # Dialog statistics
         lengths = [len(d['utterances']) for d in self.samples]
-        print(f"   Dialog lengths - min: {min(lengths)}, max: {max(lengths)}, avg: {np.mean(lengths):.1f}")
+        if lengths:
+            print(f"   Dialog lengths - min: {min(lengths)}, max: {max(lengths)}, avg: {np.mean(lengths):.1f}")
+        else:
+            print(f"   Dialog lengths - no dialogs found!")
     
     def __len__(self):
         return len(self.samples)

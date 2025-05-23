@@ -12,10 +12,10 @@ def test_dialogue_mapping():
     """Test the dialogue mapping logic."""
     try:
         from utils.data_processor import MELDDataModule
-        from configs.base_config import BaseConfig
+        from configs.base_config import Config
         
         # Create a minimal config
-        config = BaseConfig()
+        config = Config()
         config.data_root = "/content/drive/MyDrive/dlfa_capstone/meld_data"
         config.text_encoder_model_name = "roberta-base"
         config.architecture_name = "dialog_rnn"

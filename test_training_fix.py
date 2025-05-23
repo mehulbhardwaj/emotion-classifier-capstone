@@ -15,12 +15,12 @@ def test_training_fix():
         print("🔧 Testing training with dialogue mapping fix...")
         
         # Import after path setup
-        from configs.base_config import BaseConfig
+        from configs.base_config import Config
         from utils.data_processor import MELDDataModule
         from models.dialog_rnn import DialogRNNMLP
         
         # Create minimal config
-        config = BaseConfig()
+        config = Config()
         config.data_root = "/content/drive/MyDrive/dlfa_capstone/meld_data"
         config.text_encoder_model_name = "roberta-base"
         config.audio_encoder_model_name = "facebook/wav2vec2-base"
